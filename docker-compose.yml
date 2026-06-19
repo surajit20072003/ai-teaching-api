@@ -18,6 +18,18 @@ services:
     volumes:
       - ./migrations:/app/migrations
       - .:/app
+      - /sdb-disk/ai-teaching:/sdb-disk/ai-teaching   # 6.9TB local storage
+    environment:
+      - VOXCPM_URL=http://host.docker.internal:7861    # local TTS for pre-gen
+      - VOXCPM_API_KEY=spassword                       # VoxCPM auth key
+      - WAN2GP_URL=http://host.docker.internal:9090    # local image + video for pre-gen
+      - WAN2GP_API_KEY=mypassword1234                  # Wan2GP auth key
+      - OLLAMA_URL=http://host.docker.internal:11434   # local Ollama for pre-gen slide generation
+      - OLLAMA_MODEL=llama3.2:3b                       # change to any loaded model e.g. mistral:7b
+      - OLLAMA_TIMEOUT=600                             # 10 min — local models are slower than cloud
+
+    extra_hosts:
+      - "host.docker.internal:host-gateway"            # allow container to reach host ports
     restart: unless-stopped
     command: bash -c "python migrate.py && uvicorn main:app --host 0.0.0.0 --port 8000 --workers 16 --timeout-keep-alive 300 --backlog 2048"
 

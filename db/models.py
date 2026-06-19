@@ -1,7 +1,7 @@
 import os
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker, DeclarativeBase
-from sqlalchemy import Column, String, Integer, Float, Text, TIMESTAMP
+from sqlalchemy import Column, String, Integer, Float, Text, TIMESTAMP, Boolean, ForeignKey
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.sql import func
 from pgvector.sqlalchemy import Vector
@@ -11,16 +11,17 @@ DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://teaching_user:tea
 engine = create_async_engine(
     DATABASE_URL,
     echo=False,
-    pool_size=25,        # base pool (was 10)
-    max_overflow=50,     # extra burst connections (was 20) → total 75
-    pool_timeout=30,     # wait 30s for a connection before error
-    pool_pre_ping=True,  # detect dead connections automatically
+    pool_size=25,        # base pool
+    max_overflow=50,     # burst connections -> total 75
+    pool_timeout=30,
+    pool_pre_ping=True,
 )
 AsyncSessionLocal = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 class Base(DeclarativeBase):
     pass
 
+# -- Existing table (updated) --------------------------------------------------
 class TeachingCache(Base):
     __tablename__ = "teaching_qa_cache"
 
@@ -38,7 +39,69 @@ class TeachingCache(Base):
     total_duration_seconds = Column(Float, default=0.0)
     usage_count            = Column(Integer, default=0)
     created_at             = Column(TIMESTAMP(timezone=True), server_default=func.now())
-    question_embedding     = Column(Vector(384), nullable=True)   # all-MiniLM-L6-v2 dims
+    question_embedding     = Column(Vector(384), nullable=True)
+    # New: document traceability
+    document_id            = Column(UUID(as_uuid=True), ForeignKey("documents.id", ondelete="SET NULL"), nullable=True)
+    is_doc_grounded        = Column(Boolean, default=False)   # True = generated from document RAG
+    # New: pre-generation tracking
+    pregen_status          = Column(String(20), nullable=True)  # None | pending | processing | done | failed
+    pregen_completed_at    = Column(TIMESTAMP(timezone=True), nullable=True)
+
+
+# -- New: Document -------------------------------------------------------------
+class Document(Base):
+    __tablename__ = "documents"
+
+    id                   = Column(UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid())
+    subject_id           = Column(String, nullable=False)
+    title                = Column(Text, nullable=False)
+    filename             = Column(Text, nullable=False)
+    local_raw_path       = Column(Text, nullable=False)        # /sdb-disk/.../raw/{filename}
+    local_processed_path = Column(Text, nullable=True)         # /sdb-disk/.../processed/extracted.txt
+    b2_url               = Column(Text, nullable=True)
+    total_chunks         = Column(Integer, default=0)
+    pregen_total         = Column(Integer, default=0)
+    pregen_done          = Column(Integer, default=0)
+    status               = Column(String(20), default="processing")  # processing | ready | failed
+    language             = Column(String(10), default="hi-IN")
+    created_at           = Column(TIMESTAMP(timezone=True), server_default=func.now())
+    updated_at           = Column(TIMESTAMP(timezone=True), server_default=func.now())
+
+# -- New: DocumentChunk --------------------------------------------------------
+class DocumentChunk(Base):
+    __tablename__ = "document_chunks"
+
+    id              = Column(UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid())
+    document_id     = Column(UUID(as_uuid=True), ForeignKey("documents.id", ondelete="CASCADE"), nullable=False)
+    subject_id      = Column(String, nullable=False)           # denormalized for fast subject-scoped search
+    chunk_index     = Column(Integer, nullable=False)
+    section_title   = Column(Text, nullable=True)
+    chunk_text      = Column(Text, nullable=False)
+    chunk_embedding = Column(Vector(384), nullable=True)
+    created_at      = Column(TIMESTAMP(timezone=True), server_default=func.now())
+
+# -- New: DocumentQuestion -----------------------------------------------------
+class DocumentQuestion(Base):
+    __tablename__ = "document_questions"
+
+    id              = Column(UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid())
+    document_id     = Column(UUID(as_uuid=True), ForeignKey("documents.id", ondelete="CASCADE"), nullable=False)
+    subject_id      = Column(String, nullable=False)
+    question_text   = Column(Text, nullable=False)
+    is_pregen_done  = Column(Boolean, default=False)
+    cache_id        = Column(UUID(as_uuid=True), nullable=True)  # links to teaching_qa_cache once done
+    created_at      = Column(TIMESTAMP(timezone=True), server_default=func.now())
+
+# -- New: Subject (named subjects registry) ------------------------------------
+class Subject(Base):
+    __tablename__ = "subjects"
+
+    id          = Column(UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid())
+    subject_id  = Column(String, unique=True, nullable=False)  # the UUID used everywhere else
+    name        = Column(Text, nullable=False)
+    description = Column(Text, nullable=True)
+    created_at  = Column(TIMESTAMP(timezone=True), server_default=func.now())
+
 
 async def get_db():
     async with AsyncSessionLocal() as session:

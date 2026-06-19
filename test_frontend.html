@@ -67,7 +67,7 @@
             color: #9ca3af;
         }
 
-        input[type="text"] {
+        input[type="text"], select {
             width: 100%;
             padding: 11px 14px;
             border: 1.5px solid #e5e7eb;
@@ -77,7 +77,7 @@
             transition: border-color .2s, box-shadow .2s;
             background: #fafafa;
         }
-        input[type="text"]:focus {
+        input[type="text"]:focus, select:focus {
             outline: none;
             border-color: #6366f1;
             background: #fff;
@@ -362,8 +362,10 @@
         <!-- Subject + Question inputs -->
         <div class="form-row">
             <div>
-                <label for="subject">Subject <span class="optional">(optional)</span></label>
-                <input type="text" id="subject" placeholder="e.g. Physics, Biology…">
+                <label for="subject">Subject</label>
+                <select id="subject">
+                    <option value="">— Select Subject —</option>
+                </select>
             </div>
             <div>
                 <label for="question">What do you want to learn?</label>
@@ -381,7 +383,7 @@
         <!-- Live search results panel -->
         <div id="search-panel">
             <div class="panel-header">
-                <span class="ph-title">🔍 Similar Questions in Cache</span>
+                <span class="ph-title">🔍 Similar Questions &amp; Documents</span>
                 <span class="ph-count" id="panel-count"></span>
             </div>
             <div class="result-list" id="result-list"></div>
@@ -407,6 +409,29 @@
 const API_BASE = window.location.origin;
 
 // ─────────────────────────────────────────────────────────────────
+// Subject name lookup map  { uuid → name }
+// ─────────────────────────────────────────────────────────────────
+const subjectNames = {};
+
+async function loadSubjects() {
+    try {
+        const res  = await fetch(`${API_BASE}/subjects`);
+        const data = await res.json();
+        const sel  = document.getElementById('subject');
+        (data.subjects || []).forEach(s => {
+            subjectNames[s.subject_id] = s.name;
+            const opt = document.createElement('option');
+            opt.value       = s.subject_id;   // UUID used by API
+            opt.textContent = s.name;          // human name shown
+            sel.appendChild(opt);
+        });
+    } catch (e) {
+        console.warn('Could not load subjects:', e);
+    }
+}
+loadSubjects();
+
+// ─────────────────────────────────────────────────────────────────
 // Live Search while typing
 // ─────────────────────────────────────────────────────────────────
 const qInput      = document.getElementById('question');
@@ -427,18 +452,45 @@ qInput.addEventListener('input', () => {
         setStatus('');
         return;
     }
-    setStatus('<span class="spinner"></span> Searching cache…');
+    setStatus('<span class="spinner"></span> Searching…');
     debounceTimer = setTimeout(() => doSearch(q), 280);
 });
 
 async function doSearch(q) {
-    const subject = document.getElementById('subject').value.trim();
+    const subjectId = document.getElementById('subject').value.trim();
+    if (!subjectId) {
+        hidePanel();
+        setStatus('⚠️ Select a subject first to enable search');
+        return;
+    }
     try {
-        const url = `${API_BASE}/search-questions?q=${encodeURIComponent(q)}&subject_id=${encodeURIComponent(subject)}&limit=20`;
+        const url = `${API_BASE}/search-questions?q=${encodeURIComponent(q)}&subject_id=${encodeURIComponent(subjectId)}&limit=20`;
         const res  = await fetch(url);
         const data = await res.json();
-        allResults = data.results || [];
-        activeIdx  = -1;
+
+        // Merge both result sources into one unified list
+        const cacheResults = (data.qa_cache_results || []).map(r => ({
+            question:   r.question,
+            similarity: r.similarity,
+            subject_id: r.subject_id,
+            usage_count: r.usage_count || 0,
+            source: 'cache'
+        }));
+        const docResults = (data.document_chunk_results || []).map(r => ({
+            question:   r.section_title
+                          ? `[${r.section_title}] ${r.chunk_text.slice(0, 80)}…`
+                          : r.chunk_text.slice(0, 100) + '…',
+            similarity: r.similarity,
+            subject_id: r.subject_id || '',
+            usage_count: 0,
+            source: 'document',
+            document_title: r.document_title
+        }));
+
+        allResults = [...cacheResults, ...docResults]
+            .sort((a, b) => b.similarity - a.similarity);
+
+        activeIdx = -1;
         renderPanel(allResults, q);
     } catch {
         hidePanel();
@@ -463,9 +515,16 @@ function renderPanel(results, query) {
     resultList.innerHTML = results.map((r, i) => {
         const pct      = Math.round(r.similarity * 100);
         const level    = pct >= 85 ? 'high' : pct >= 65 ? 'medium' : 'low';
-        const subTag   = r.subject_id ? `<span class="ri-tag tag-subject">${escHtml(r.subject_id)}</span>` : '';
+
+        // Source badge: cache vs document
+        const sourceTag = r.source === 'document'
+            ? `<span class="ri-tag" style="background:#fef3c7;color:#92400e">📄 ${escHtml(r.document_title || 'Document')}</span>`
+            : `<span class="ri-tag tag-cached">✓ Cached</span>`;
+
+        // Subject name (human readable) instead of raw UUID
+        const subName  = subjectNames[r.subject_id] || r.subject_id;
+        const subTag   = subName ? `<span class="ri-tag tag-subject">${escHtml(subName)}</span>` : '';
         const usesTag  = r.usage_count > 1 ? `<span class="ri-tag tag-uses">👥 ${r.usage_count} uses</span>` : '';
-        const cachedTag= `<span class="ri-tag tag-cached">✓ Cached</span>`;
 
         // Highlight matching words in result
         const highlighted = highlightMatch(r.question, query);
@@ -481,7 +540,7 @@ function renderPanel(results, query) {
             <div class="ri-body">
                 <div class="ri-question" title="${escHtml(r.question)}">${highlighted}</div>
                 <div class="ri-meta">
-                    ${cachedTag}
+                    ${sourceTag}
                     ${subTag}
                     ${usesTag}
                 </div>
@@ -564,13 +623,21 @@ function escHtml(s) {
 // Generate Presentation
 // ─────────────────────────────────────────────────────────────────
 async function generate() {
-    const question = qInput.value.trim();
-    const subject  = document.getElementById('subject').value.trim();
+    const question  = qInput.value.trim();
+    const subjectId = document.getElementById('subject').value.trim();
+    const subjectName = subjectNames[subjectId] || subjectId;
 
     if (!question) {
         qInput.focus();
         qInput.style.borderColor = '#ef4444';
         setTimeout(() => qInput.style.borderColor = '', 1200);
+        return;
+    }
+    if (!subjectId) {
+        const sel = document.getElementById('subject');
+        sel.style.borderColor = '#ef4444';
+        setTimeout(() => sel.style.borderColor = '', 1400);
+        setStatus('⚠️ Please select a subject before generating');
         return;
     }
 
@@ -586,7 +653,8 @@ async function generate() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 question,
-                subjectName: subject,
+                subjectId:   subjectId,
+                subjectName: subjectName,
                 mode: 'full',
                 language: 'en-US'
             })

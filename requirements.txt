@@ -12,3 +12,9 @@ json-repair==0.23.0
 sentence-transformers==3.0.1
 pgvector==0.3.6
 numpy==1.26.4
+# Document processing
+pdfplumber==0.11.4
+python-docx==1.1.2
+python-multipart==0.0.12
+# Async local file I/O
+aiofiles==24.1.0

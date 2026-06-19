@@ -15,12 +15,15 @@ _model = None
 
 
 def get_model():
-    """Lazy-load embedding model (only on first embed call)."""
+    """Lazy-load embedding model (only on first embed call). Forced to CPU."""
     global _model
     if _model is None:
         from sentence_transformers import SentenceTransformer
-        print(f"[Embeddings] Loading model '{EMBED_MODEL_NAME}' (first time only)...")
-        _model = SentenceTransformer(EMBED_MODEL_NAME)
+        print(f"[Embeddings] Loading model '{EMBED_MODEL_NAME}' on CPU (first time only)...")
+        # device='cpu' prevents the 'meta tensor' crash that occurs in
+        # multi-worker Uvicorn when device_map='auto' puts tensors on a
+        # meta device that cannot be used for inference.
+        _model = SentenceTransformer(EMBED_MODEL_NAME, device='cpu')
         print("[Embeddings] ✓ Model loaded and cached in memory.")
     return _model
 
@@ -30,10 +33,24 @@ def embed_text(text: str) -> list[float]:
     Encode text → 384-dim normalized float list.
     Runs on CPU, typically ~5ms per call.
     normalize_embeddings=True ensures cosine similarity = dot product.
+    Retries once if encode() fails (meta tensor or other transient error).
     """
-    model = get_model()
-    vec = model.encode(text, normalize_embeddings=True)
-    return vec.tolist()
+    global _model
+    try:
+        model = get_model()
+        vec = model.encode(text, normalize_embeddings=True)
+        return vec.tolist()
+    except Exception as e:
+        print(f"[Embeddings] encode() failed ({e}), reloading model and retrying...")
+        _model = None  # force reload on next call
+        try:
+            from sentence_transformers import SentenceTransformer
+            _model = SentenceTransformer(EMBED_MODEL_NAME, device='cpu')
+            vec = _model.encode(text, normalize_embeddings=True)
+            print("[Embeddings] ✓ Model reloaded successfully after failure.")
+            return vec.tolist()
+        except Exception as e2:
+            raise RuntimeError(f"[Embeddings] Fatal: model reload also failed: {e2}") from e2
 
 
 async def embed_async(text: str) -> list[float]:

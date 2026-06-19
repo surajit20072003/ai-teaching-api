@@ -1,9 +1,9 @@
 import os, uuid, base64, asyncio
-from sqlalchemy import text
+from sqlalchemy import text, update, select
 from fastapi import FastAPI, Depends, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -18,14 +18,15 @@ from core.tts_client import synthesize
 from core.b2_client import upload_to_b2
 from core.embeddings import embed_async, vec_to_pg_str
 from core.semantic_check import llm_same_topic
+from core.local_storage import ensure_base_dirs, read_slide_cache, write_slide_cache
+from core.llm_judge import judge_and_pick
+from routers.documents import router as documents_router
+from routers.pregen import router as pregen_router
+
 
 # ─────────────────────────────────────────────────────────
-# Global concurrency limiter
-# Max 16 AI generations at a time — others WAIT IN QUEUE
-# (no errors, no timeouts — just a longer wait)
+# Audio helper (used by /ai-teaching-assistant)
 # ─────────────────────────────────────────────────────────
-GENERATION_SEMAPHORE = asyncio.Semaphore(16)
-
 async def generate_all_audios(slides: list, cache_id: str, language: str) -> list[dict]:
     """Generate audio for all slides in parallel and upload to B2."""
     async def _gen_and_up(idx: int, narration: str):
@@ -34,32 +35,31 @@ async def generate_all_audios(slides: list, cache_id: str, language: str) -> lis
         try:
             print(f"[Audio] Slide {idx} → generating audio")
             audio_b64 = await synthesize(narration, language)
-            wav_data = base64.b64decode(audio_b64)
-            path = f"ai-presentations/{cache_id}/{language}/slide_{idx}.wav"
-            url = await upload_to_b2(wav_data, path, "audio/wav")
+            wav_data  = base64.b64decode(audio_b64)
+            path      = f"ai-presentations/{cache_id}/{language}/slide_{idx}.wav"
+            url       = await upload_to_b2(wav_data, path, "audio/wav")
             print(f"[Audio] Slide {idx} → uploaded to {url}")
-            
-            # Estimate duration robustly using built-in wave module
             try:
                 import io, wave
-                with wave.open(io.BytesIO(wav_data), 'rb') as wf:
-                    frames = wf.getnframes()
-                    rate = wf.getframerate()
-                    duration = frames / float(rate) if rate else 0.0
+                with wave.open(io.BytesIO(wav_data), "rb") as wf:
+                    duration = wf.getnframes() / float(wf.getframerate() or 1)
             except Exception as e:
-                print(f"[Audio] Warning: Failed to parse WAV duration: {e}")
+                print(f"[Audio] Warning: WAV parse failed: {e}")
                 duration = 10.0
-                
             return {"slideIndex": idx, "audioUrl": url, "duration": round(duration, 2)}
         except Exception as e:
             print(f"[Audio] Slide {idx} failed: {e}")
             return None
 
-    tasks = [_gen_and_up(i, s.get("narration", "")) for i, s in enumerate(slides)]
+    tasks   = [_gen_and_up(i, s.get("narration", "")) for i, s in enumerate(slides)]
     results = await asyncio.gather(*tasks)
     return [r for r in results if r]
 
-app = FastAPI(title="AI Teaching Assistant API", version="1.0.0")
+
+# ─────────────────────────────────────────────────────────
+# App
+# ─────────────────────────────────────────────────────────
+app = FastAPI(title="AI Teaching Assistant API", version="2.0.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -68,74 +68,182 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ─────────────────────────────────────────────────────────
-# Health Check
-# ─────────────────────────────────────────────────────────
-from fastapi.responses import FileResponse
+app.include_router(documents_router)
+app.include_router(pregen_router)
 
+@app.on_event("startup")
+async def startup_event():
+    ensure_base_dirs()
+
+
+# ─────────────────────────────────────────────────────────
+# Serve frontend
+# ─────────────────────────────────────────────────────────
 @app.get("/")
 async def serve_frontend():
     return FileResponse("/app/test_frontend.html", media_type="text/html")
 
+@app.get("/pregen-dashboard", include_in_schema=False)
+async def serve_pregen_dashboard():
+    """Pre-Generation monitoring & control dashboard."""
+    return FileResponse("/app/pregen_dashboard.html", media_type="text/html")
+
 @app.get("/health")
 async def health():
-    return {"status": "ok", "version": "1.0.0"}
-
+    return {"status": "ok", "version": "2.0.0"}
 
 
 # ─────────────────────────────────────────────────────────
-# GET /search-questions  (autocomplete + semantic search)
+# GET /search-questions  — two-source semantic search
 # ─────────────────────────────────────────────────────────
 @app.get("/search-questions")
 async def search_questions(
     q: str = "",
     subject_id: str = "",
-    limit: int = 10,
-    db: AsyncSession = Depends(get_db)
+    limit: int = 5,
+    db: AsyncSession = Depends(get_db),
 ):
     """
-    Semantic autocomplete: returns top matching past questions.
-    Uses pgvector cosine similarity on all-MiniLM-L6-v2 embeddings.
-    Call this on every keystroke (debounce 300ms on frontend).
+    Two-source semantic search:
+      Source 1: teaching_qa_cache   (past answered Q&As)
+      Source 2: document_chunks     (uploaded lecture documents)
+    subject_id is REQUIRED — prevents cross-subject results.
     """
+    if not subject_id:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "subject_id is required", "hint": "Pass ?subject_id=physics-101"}
+        )
     if not q or len(q.strip()) < 2:
-        return {"results": []}
+        return {"results": [], "document_chunks": []}
 
     try:
         query_vec = await embed_async(q.strip())
         vec_str   = vec_to_pg_str(query_vec)
 
-        sql = text("""
-            SELECT
-                question_text,
-                subject_id,
-                usage_count,
-                1 - (question_embedding <=> CAST(:vec AS vector)) AS similarity
+        # Source 1: Q&A cache
+        cache_sql = text("""
+            SELECT question_text, subject_id, usage_count,
+                   1 - (question_embedding <=> CAST(:vec AS vector)) AS similarity
             FROM teaching_qa_cache
-            WHERE
-                question_embedding IS NOT NULL
-                AND (:subj = '' OR subject_id = :subj)
-                AND 1 - (question_embedding <=> CAST(:vec AS vector)) > 0.45
-            ORDER BY similarity DESC
-            LIMIT :lim
+            WHERE question_embedding IS NOT NULL
+              AND subject_id = :subj
+              AND 1 - (question_embedding <=> CAST(:vec AS vector)) > 0.45
+            ORDER BY similarity DESC LIMIT :lim
         """)
+        cache_rows = (await db.execute(
+            cache_sql, {"vec": vec_str, "subj": subject_id, "lim": limit}
+        )).fetchall()
 
-        rows = (await db.execute(sql, {"vec": vec_str, "subj": subject_id, "lim": limit})).fetchall()
+        # Source 2: Document chunks
+        chunk_sql = text("""
+            SELECT dc.chunk_text, dc.section_title, dc.document_id,
+                   d.title AS document_title,
+                   1 - (dc.chunk_embedding <=> CAST(:vec AS vector)) AS similarity
+            FROM document_chunks dc
+            JOIN documents d ON d.id = dc.document_id
+            WHERE dc.chunk_embedding IS NOT NULL
+              AND dc.subject_id = :subj
+              AND d.status = 'ready'
+              AND 1 - (dc.chunk_embedding <=> CAST(:vec AS vector)) > 0.45
+            ORDER BY similarity DESC LIMIT :lim
+        """)
+        chunk_rows = (await db.execute(
+            chunk_sql, {"vec": vec_str, "subj": subject_id, "lim": limit}
+        )).fetchall()
 
         return {
-            "results": [
+            "query": q,
+            "subject_id": subject_id,
+            "qa_cache_results": [
                 {
-                    "question":    r.question_text,
-                    "subject_id":  r.subject_id,
+                    "source": "qa_cache",
+                    "question": r.question_text,
+                    "subject_id": r.subject_id,
                     "usage_count": r.usage_count,
-                    "similarity":  round(float(r.similarity), 3)
+                    "similarity": round(float(r.similarity), 3),
                 }
-                for r in rows
-            ]
+                for r in cache_rows
+            ],
+            "document_chunk_results": [
+                {
+                    "source": "document_chunk",
+                    "chunk_text": r.chunk_text[:300] + "..." if len(r.chunk_text) > 300 else r.chunk_text,
+                    "section_title": r.section_title,
+                    "document_id": str(r.document_id),
+                    "document_title": r.document_title,
+                    "similarity": round(float(r.similarity), 3),
+                }
+                for r in chunk_rows
+            ],
         }
     except Exception as e:
         print(f"[Search] Error: {e}")
-        return {"results": []}
+        return {"results": [], "document_chunks": [], "error": str(e)}
+
+
+# ─────────────────────────────────────────────────────────
+# GET /subjects  — list all subjects that have content
+# ─────────────────────────────────────────────────────────
+@app.get("/subjects")
+async def list_subjects(db: AsyncSession = Depends(get_db)):
+    """List all unique subject_ids from both Q&A cache and documents."""
+    sql = text("""
+        SELECT subject_id, 'qa_cache' AS source, COUNT(*) AS count
+        FROM teaching_qa_cache
+        WHERE subject_id IS NOT NULL GROUP BY subject_id
+        UNION
+        SELECT subject_id, 'documents' AS source, COUNT(*) AS count
+        FROM documents
+        GROUP BY subject_id
+        ORDER BY subject_id, source
+    """)
+    rows = (await db.execute(sql)).fetchall()
+
+    subjects: dict[str, dict] = {}
+    for r in rows:
+        sid = r.subject_id
+        if sid not in subjects:
+            subjects[sid] = {"subject_id": sid, "name": sid[:20], "qa_count": 0, "document_count": 0}
+        if r.source == "qa_cache":
+            subjects[sid]["qa_count"] = r.count
+        else:
+            subjects[sid]["document_count"] = r.count
+
+    # Also include subjects that were explicitly created but have no content yet
+    named = (await db.execute(text("SELECT subject_id, name FROM subjects ORDER BY created_at DESC"))).fetchall()
+    for r in named:
+        if r.subject_id not in subjects:
+            subjects[r.subject_id] = {"subject_id": r.subject_id, "name": r.name, "qa_count": 0, "document_count": 0}
+        else:
+            subjects[r.subject_id]["name"] = r.name  # enrich existing entry with name
+
+    return {"total": len(subjects), "subjects": list(subjects.values())}
+
+
+# POST /subjects — create and persist a new named subject
+@app.post("/subjects")
+async def create_subject(body: dict, db: AsyncSession = Depends(get_db)):
+    """Create a new subject — saves to subjects table so it appears in dropdown immediately."""
+    import uuid as _uuid
+    name = (body.get("name") or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="name is required")
+    subject_id = str(_uuid.uuid4())
+    await db.execute(
+        text("""
+            INSERT INTO subjects (subject_id, name, description)
+            VALUES (:sid, :name, :desc)
+            ON CONFLICT (subject_id) DO NOTHING
+        """),
+        {"sid": subject_id, "name": name, "desc": body.get("description", "")},
+    )
+    await db.commit()
+    return {
+        "subject_id": subject_id,
+        "name": name,
+        "description": body.get("description", ""),
+    }
 
 
 # ─────────────────────────────────────────────────────────
@@ -144,19 +252,18 @@ async def search_questions(
 @app.post("/sarvam-tts")
 async def sarvam_tts(body: dict):
     """Convert narration text to speech using Sarvam AI TTS."""
-    text          = body.get("text", "")
+    text_input    = body.get("text", "")
     language_code = body.get("languageCode", "hi-IN")
     gender        = body.get("gender", "male")
+    if not text_input:
+        return JSONResponse(status_code=400, content={"error": "text is required"})
 
-    if not text:
-        return {"error": "text is required"}, 400
-
-    audio_b64 = await synthesize(text, language_code, gender)
+    audio_b64 = await synthesize(text_input, language_code, gender)
     return {
         "audioContent": audio_b64,
         "languageCode": language_code,
         "voice": "bulbul:v2",
-        "format": "wav"
+        "format": "wav",
     }
 
 
@@ -184,8 +291,8 @@ async def save_presentation_audio(body: dict, db: AsyncSession = Depends(get_db)
     language = body.get("language", "hi-IN")
     slides   = body.get("slides", [])
 
-    audio_urls  = []
-    total_dur   = 0.0
+    audio_urls = []
+    total_dur  = 0.0
 
     for slide in slides:
         idx    = slide.get("slideIndex", 0)
@@ -193,34 +300,27 @@ async def save_presentation_audio(body: dict, db: AsyncSession = Depends(get_db)
         if not chunks:
             continue
 
-        # Decode and concatenate WAV chunks
         wav_data = b"".join(base64.b64decode(c) for c in chunks)
-
-        # Estimate duration robustly using built-in wave module
         try:
             import io, wave
-            with wave.open(io.BytesIO(wav_data), 'rb') as wf:
-                frames = wf.getnframes()
-                rate = wf.getframerate()
-                duration = frames / float(rate) if rate else 0.0
+            with wave.open(io.BytesIO(wav_data), "rb") as wf:
+                duration = wf.getnframes() / float(wf.getframerate() or 1)
         except Exception as e:
-            print(f"[Audio Save] Warning: Failed to parse WAV duration: {e}")
+            print(f"[Audio Save] WAV parse failed: {e}")
             duration = 10.0
 
         path = f"ai-presentations/{cache_id}/{language}/slide_{idx}.wav"
         url  = await upload_to_b2(wav_data, path, "audio/wav")
-
         audio_urls.append({"slideIndex": idx, "audioUrl": url, "duration": round(duration, 2)})
         total_dur += duration
 
-    # Update DB
     try:
         await db.execute(
             update(TeachingCache)
             .where(TeachingCache.id == cache_id)
             .values(
                 slide_audio_urls={"language": language, "urls": audio_urls},
-                total_duration_seconds=round(total_dur, 2)
+                total_duration_seconds=round(total_dur, 2),
             )
         )
         await db.commit()
@@ -241,11 +341,11 @@ async def teaching_assistant(body: dict, db: AsyncSession = Depends(get_db)):
     subject_id   = body.get("subjectId", "")
     language     = body.get("language", "hi-IN")
 
-    # ── MODE: detect_topic (fast, no slides) ─────────────
+    # ── MODE: detect_topic ───────────────────────────────
     if mode == "detect_topic":
         return await detect_topic(question, subject_name)
 
-    # ── MODE: doubt (1 slide explanation) ────────────────
+    # ── MODE: doubt ──────────────────────────────────────
     if mode == "doubt":
         question_text = body.get("questionText", question)
         correct       = body.get("correctAnswer", "")
@@ -259,29 +359,41 @@ async def teaching_assistant(body: dict, db: AsyncSession = Depends(get_db)):
             s["infographicUrl"] = images[i] if i < len(images) else ""
         return {"presentationSlides": slides, "isDoubtExplanation": True, "cache_id": cache_id}
 
-    # ── MODE: full ────────────────────────────────────────
+    # ── MODE: full ───────────────────────────────────────
     if not question:
         return {"error": "question is required"}
+    if not subject_id:
+        return {"error": "subjectId is required", "hint": "Pass subjectId in the request body"}
 
     q_hash = hash_question(question)
 
-    # Step 1: Redis L1 cache
+    # [L1] Redis exact hash (~0.5ms)
     cached = await get_from_cache(q_hash, subject_id)
     if cached:
         await increment_usage(q_hash, subject_id)
-        return {**cached, "cached": True}
+        return {**cached, "cached": True, "cache_layer": "L1_redis"}
 
-    # Step 2A: Postgres exact hash cache
-    result = await db.execute(
+    # [L2] Local disk JSON (~1ms, avoids DB round-trip)
+    local_cached = await read_slide_cache(subject_id, q_hash)
+    if local_cached:
+        print(f"[L2] Local cache HIT for '{question[:60]}'")
+        await set_to_cache(q_hash, subject_id, local_cached)
+        return {**local_cached, "cached": True, "cache_layer": "L2_local_disk"}
+
+    # [L3] Postgres exact hash (~3ms)
+    print(f"[L3] hash={q_hash[:8]}… subject={subject_id[:8]}… question='{question[:50]}'")
+    row = (await db.execute(
         select(TeachingCache)
         .where(TeachingCache.question_hash == q_hash)
+        .where(TeachingCache.subject_id == subject_id)
         .order_by(TeachingCache.usage_count.desc())
         .limit(1)
-    )
-    row = result.scalar_one_or_none()
+    )).scalar_one_or_none()
+
     if row and row.presentation_slides:
+        print(f"[L3] ✓ HIT — returning pre-generated slides")
         data = {
-            "cached": True,
+            "cached": True, "cache_layer": "L3_postgres",
             "cache_id": str(row.id),
             "presentationSlides": row.presentation_slides,
             "latexFormulas": row.latex_formulas,
@@ -289,67 +401,64 @@ async def teaching_assistant(body: dict, db: AsyncSession = Depends(get_db)):
             "totalDurationSeconds": row.total_duration_seconds,
         }
         await set_to_cache(q_hash, subject_id, data)
+        await write_slide_cache(subject_id, q_hash, data)
         return data
+    print(f"[L3] ✗ MISS")
 
-    # Step 2B: Semantic + LLM equivalence cache
-    # Three zones based on cosine similarity:
-    #   > 0.97  → near-identical phrasing, trust vector alone (no LLM needed)
-    #   0.70–0.97 → gray zone: ask LLM "same topic?"
-    #   < 0.70  → too different, skip (will generate fresh)
-    GRAY_LOW  = 0.70
-    EXACT_HIT = 0.97
+    # [L4] Semantic search + LLM-as-Judge (single LLM call for up to 5 candidates)
+    print(f"[L4] Starting semantic search for '{question[:50]}'")
     try:
         query_vec = await embed_async(question)
+        print(f"[L4] ✓ Embedding generated ({len(query_vec)} dims)")
         vec_str   = vec_to_pg_str(query_vec)
 
         sem_sql = text("""
-            SELECT *,
+            SELECT id, question_text, presentation_slides, latex_formulas,
+                   slide_audio_urls, total_duration_seconds,
                    1 - (question_embedding <=> CAST(:vec AS vector)) AS sim_score
             FROM teaching_qa_cache
-            WHERE
-                question_embedding IS NOT NULL
-                AND (:subj = '' OR subject_id = :subj)
-                AND 1 - (question_embedding <=> CAST(:vec AS vector)) > :low
-            ORDER BY sim_score DESC
-            LIMIT 5
+            WHERE question_embedding IS NOT NULL
+              AND subject_id = :subj
+              AND presentation_slides IS NOT NULL
+              AND 1 - (question_embedding <=> CAST(:vec AS vector)) > 0.60
+            ORDER BY sim_score DESC LIMIT 5
         """)
+        rows = (await db.execute(sem_sql, {"vec": vec_str, "subj": subject_id})).fetchall()
+        print(f"[L4] Semantic candidates found: {len(rows)}")
+        for r in rows:
+            print(f"[L4]   score={float(r.sim_score):.3f} | '{r.question_text[:60]}'")
 
-        candidates = (await db.execute(
-            sem_sql, {"vec": vec_str, "subj": subject_id or "", "low": GRAY_LOW}
-        )).fetchall()
-
-        for candidate in candidates:
-            if not candidate.presentation_slides:
-                continue
-
-            score = float(candidate.sim_score)
-
-            if score >= EXACT_HIT:
-                # Near-identical text — trust vector, no LLM needed
-                print(f"[Semantic Cache] EXACT HIT ({score:.3f}) — '{question}' = '{candidate.question_text}'")
-                is_same = True
-            else:
-                # Gray zone — ask LLM to verify (costs ~$0.000001)
-                print(f"[Semantic Cache] Gray zone ({score:.3f}) — asking LLM: '{question}' vs '{candidate.question_text}'")
-                is_same = await llm_same_topic(question, candidate.question_text)
-
-            if is_same:
-                data = {
-                    "cached": True,
-                    "cache_id": str(candidate.id),
-                    "presentationSlides": candidate.presentation_slides,
-                    "latexFormulas": candidate.latex_formulas,
-                    "slideAudioUrls": candidate.slide_audio_urls.get("urls", []) if candidate.slide_audio_urls else [],
-                    "totalDurationSeconds": candidate.total_duration_seconds,
+        if rows:
+            judge_candidates = [
+                {
+                    "question": r.question_text,
+                    "score": float(r.sim_score),
+                    "answer_data": {
+                        "cached": True, "cache_layer": "L4_llm_judge",
+                        "cache_id": str(r.id),
+                        "presentationSlides": r.presentation_slides,
+                        "latexFormulas": r.latex_formulas,
+                        "slideAudioUrls": r.slide_audio_urls.get("urls", []) if r.slide_audio_urls else [],
+                        "totalDurationSeconds": r.total_duration_seconds,
+                    }
                 }
+                for r in rows
+            ]
+            winner = await judge_and_pick(question, judge_candidates, subject_id)
+            if winner:
+                print(f"[L4] ✓ LLM Judge selected a cache hit")
+                data = winner["answer_data"]
                 await set_to_cache(q_hash, subject_id, data)
+                await write_slide_cache(subject_id, q_hash, data)
                 return data
-            # else: try next candidate
+            print(f"[L4] LLM Judge said NEW — no close match")
+        else:
+            print(f"[L4] ✗ No semantic candidates above 0.60 threshold")
 
     except Exception as e:
-        print(f"[Semantic Cache] Check failed (non-fatal): {e}")
+        print(f"[L4 LLM Judge] failed (non-fatal): {e}")
 
-    # Step 3: Subject gating (only when subject is explicitly provided)
+    # ── Subject gating (only when subject_name given) ────
     if subject_name:
         gate = await gate_subject(question, subject_name)
         if not gate.get("allowed", True):
@@ -358,90 +467,101 @@ async def teaching_assistant(body: dict, db: AsyncSession = Depends(get_db)):
                 "reason": "off_topic",
                 "currentSubject": subject_name,
                 "detectedSubject": gate.get("detected_subject", ""),
-                "message": f"This question is about {gate.get('detected_subject','')}. Please ask a {subject_name} question."
+                "message": (
+                    f"This question is about {gate.get('detected_subject','')}. "
+                    f"Please ask a {subject_name} question."
+                ),
             }
 
-    # ── Distributed lock: prevent thundering herd ─────────────────────────
-    # If 100 users ask same question at once → only 1 fires AI call,
-    # the other 99 wait here and get the cached result when it's ready.
-    lock_acquired = await acquire_lock(q_hash, subject_id, ttl=120)
-    if not lock_acquired:
-        print(f"[Lock] Another worker is generating '{question}' — waiting for cache…")
-        cached = await wait_for_cache(q_hash, subject_id, max_wait=110)
-        if cached:
-            print(f"[Lock] Got result from waiting worker for '{question}'")
-            return {**cached, "cached": True}
-        # Timeout — the other worker may have crashed, fall through and generate ourselves
-        print(f"[Lock] Wait timeout for '{question}' — generating as fallback")
-        await acquire_lock(q_hash, subject_id, ttl=120)  # acquire for ourselves now
+    # ── GENERATE (all cache layers exhausted) ──────────
+    # [L5] Document RAG — find top 3 chunks from subject's docs
+    rag_context = ""
+    is_doc_grounded = False
+    try:
+        if not query_vec:  # may already be computed from L4
+            query_vec = await embed_async(question)
+            vec_str   = vec_to_pg_str(query_vec)
 
-    # ── Generation semaphore: queue if system is busy ─────────────────────
-    # Max 16 concurrent AI generations. Others WAIT here (no error returned).
-    # This is the queue — user just sees a longer spinner, never an error.
-    print(f"[Queue] Waiting for generation slot… ({GENERATION_SEMAPHORE._value} slots free)")
-    async with GENERATION_SEMAPHORE:
-        print(f"[Queue] Got slot — starting generation for '{question}'")
-        try:
-            # Step 4: Generate slides
-            slides_data = await generate_slides(question, subject_name)
-            slides      = slides_data.get("presentation_slides", [])
+        rag_sql = text("""
+            SELECT dc.chunk_text, dc.section_title, d.title AS doc_title,
+                   1 - (dc.chunk_embedding <=> CAST(:vec AS vector)) AS sim
+            FROM document_chunks dc
+            JOIN documents d ON d.id = dc.document_id
+            WHERE dc.chunk_embedding IS NOT NULL
+              AND dc.subject_id = :subj
+              AND d.status = 'ready'
+              AND 1 - (dc.chunk_embedding <=> CAST(:vec AS vector)) > 0.50
+            ORDER BY sim DESC LIMIT 3
+        """)
+        rag_rows = (await db.execute(rag_sql, {"vec": vec_str, "subj": subject_id})).fetchall()
 
-            # Step 5: Generate images and audio in PARALLEL
-            cache_id = str(uuid.uuid4())
-
-            images_task = generate_all_images(slides, cache_id)
-            audios_task = generate_all_audios(slides, cache_id, language)
-
-            images, audios = await asyncio.gather(images_task, audios_task)
-
-            for i, s in enumerate(slides):
-                s["infographicUrl"] = images[i] if i < len(images) else ""
-                audio_info = next((a for a in audios if a and a.get("slideIndex") == i), None)
-                if audio_info:
-                    s["audioUrl"] = audio_info.get("audioUrl")
-                    s["duration"] = audio_info.get("duration")
-
-            total_duration = sum(a.get("duration", 0) for a in audios if a)
-
-            # Step 6: Save to Postgres
-            new_row = TeachingCache(
-                id=uuid.UUID(cache_id),
-                question_hash=q_hash,
-                question_text=question,
-                subject_id=subject_id or None,
-                language=language,
-                variation_number=1,
-                presentation_slides=slides,
-                latex_formulas=slides_data.get("latex_formulas", []),
-                slide_audio_urls={"language": language, "urls": audios},
-                total_duration_seconds=total_duration
+        if rag_rows:
+            rag_context = "\n\n".join(
+                f"[{r.doc_title} / {r.section_title or 'Section'}]\n{r.chunk_text}"
+                for r in rag_rows
             )
-            db.add(new_row)
-            await db.commit()
+            is_doc_grounded = True
+            print(f"[L5 RAG] {len(rag_rows)} chunks found for '{question[:60]}'")
+    except Exception as e:
+        print(f"[L5 RAG] failed (non-fatal, using general knowledge): {e}")
 
-            result_data = {
-                "cached": False,
-                "cache_id": cache_id,
-                "presentationSlides": slides,
-                "latexFormulas": slides_data.get("latex_formulas", []),
-                "keyPoints": slides_data.get("key_points", []),
-                "followUpQuestions": slides_data.get("follow_up_questions", []),
-                "slideAudioUrls": audios,
-                "totalDurationSeconds": total_duration,
-            }
+    slides_data = await generate_slides(question, subject_name, context=rag_context)
+    slides      = slides_data.get("presentation_slides", [])
+    cache_id    = str(uuid.uuid4())
 
-            # Step 7: Warm Redis — other waiting workers will now find this
-            await set_to_cache(q_hash, subject_id, result_data)
+    images_task = generate_all_images(slides, cache_id)
+    audios_task = generate_all_audios(slides, cache_id, language)
+    images, audios = await asyncio.gather(images_task, audios_task)
 
-        finally:
-            # ALWAYS release the lock — even if generation failed
-            await release_lock(q_hash, subject_id)
+    for i, s in enumerate(slides):
+        s["infographicUrl"] = images[i] if i < len(images) else ""
+        audio_info = next((a for a in audios if a and a.get("slideIndex") == i), None)
+        if audio_info:
+            s["audioUrl"] = audio_info.get("audioUrl")
+            s["duration"] = audio_info.get("duration")
 
-    # Step 8: Store embedding (background, non-blocking)
+    total_duration = sum(a.get("duration", 0) for a in audios if a)
+
+    # Save to Postgres — set is_doc_grounded if generated from document RAG (7.8)
+    new_row = TeachingCache(
+        id=uuid.UUID(cache_id),
+        question_hash=q_hash,
+        question_text=question,
+        subject_id=subject_id or None,
+        language=language,
+        variation_number=1,
+        presentation_slides=slides,
+        latex_formulas=slides_data.get("latex_formulas", []),
+        slide_audio_urls={"language": language, "urls": audios},
+        total_duration_seconds=total_duration,
+        is_doc_grounded=is_doc_grounded,
+        pregen_status="done",
+    )
+    db.add(new_row)
+    await db.commit()
+
+    result_data = {
+        "cached": False,
+        "cache_layer": "GENERATED",
+        "cache_id": cache_id,
+        "isDocGrounded": is_doc_grounded,
+        "presentationSlides": slides,
+        "latexFormulas": slides_data.get("latex_formulas", []),
+        "keyPoints": slides_data.get("key_points", []),
+        "followUpQuestions": slides_data.get("follow_up_questions", []),
+        "slideAudioUrls": audios,
+        "totalDurationSeconds": total_duration,
+    }
+
+    # Warm L1 + L2 caches
+    await set_to_cache(q_hash, subject_id, result_data)
+    await write_slide_cache(subject_id, q_hash, result_data)
+
+    # Store embedding (background, non-blocking)
     async def _store_embedding():
         try:
-            vec = await embed_async(question)
-            vec_str = vec_to_pg_str(vec)
+            vec     = await embed_async(question)
+            v_str   = vec_to_pg_str(vec)
             async with AsyncSessionLocal() as bg_db:
                 await bg_db.execute(
                     text("""
@@ -449,13 +569,12 @@ async def teaching_assistant(body: dict, db: AsyncSession = Depends(get_db)):
                         SET question_embedding = CAST(:vec AS vector)
                         WHERE id = CAST(:id AS uuid)
                     """),
-                    {"vec": vec_str, "id": cache_id}
+                    {"vec": v_str, "id": cache_id},
                 )
                 await bg_db.commit()
             print(f"[Embeddings] ✓ Stored for cache_id={cache_id}")
         except Exception as e:
-            print(f"[Embeddings] Warning: failed to store embedding: {e}")
+            print(f"[Embeddings] Failed: {e}")
 
     asyncio.create_task(_store_embedding())
-
     return result_data

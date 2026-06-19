@@ -1,0 +1,806 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Pre-Generation Dashboard — AI Teaching API</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap');
+
+    :root {
+      --bg:        #0a0d14;
+      --bg2:       #0f1320;
+      --bg3:       #141926;
+      --border:    rgba(255,255,255,0.07);
+      --accent:    #6c63ff;
+      --accent2:   #00d4aa;
+      --danger:    #ff4d6d;
+      --warn:      #ffa94d;
+      --text:      #e8eaf0;
+      --muted:     #6b7280;
+      --radius:    12px;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Inter', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+    }
+
+    /* ── Header ── */
+    header {
+      background: var(--bg2);
+      border-bottom: 1px solid var(--border);
+      padding: 18px 32px;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+    header .logo {
+      width: 38px; height: 38px;
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      border-radius: 10px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 18px;
+    }
+    header h1 { font-size: 18px; font-weight: 700; }
+    header span { font-size: 13px; color: var(--muted); margin-left: auto; font-family: 'JetBrains Mono', monospace; }
+
+    /* ── Layout ── */
+    .container { max-width: 1200px; margin: 0 auto; padding: 32px; }
+
+    /* ── Cards grid ── */
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 16px;
+      margin-bottom: 28px;
+    }
+    .stat-card {
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px;
+      position: relative;
+      overflow: hidden;
+      transition: border-color .2s;
+    }
+    .stat-card:hover { border-color: rgba(108,99,255,.4); }
+    .stat-card .label { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); font-weight: 600; }
+    .stat-card .value { font-size: 36px; font-weight: 800; margin-top: 8px; font-family: 'JetBrains Mono', monospace; }
+    .stat-card .sub   { font-size: 12px; color: var(--muted); margin-top: 4px; }
+    .stat-card .glow  { position: absolute; bottom: -20px; right: -20px; width: 80px; height: 80px; border-radius: 50%; opacity: .08; }
+
+    /* ── Section ── */
+    .section { background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 24px; overflow: hidden; }
+    .section-header { padding: 16px 24px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 10px; }
+    .section-header h2 { font-size: 15px; font-weight: 600; }
+    .section-body { padding: 24px; }
+
+    /* ── Controls ── */
+    .controls { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end; }
+    .field { display: flex; flex-direction: column; gap: 6px; flex: 1; min-width: 220px; }
+    .field label { font-size: 12px; color: var(--muted); font-weight: 500; }
+    .field input, .field select {
+      background: var(--bg3);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px 14px;
+      color: var(--text);
+      font-size: 14px;
+      font-family: 'Inter', sans-serif;
+      outline: none;
+      transition: border-color .2s;
+    }
+    .field input:focus, .field select:focus { border-color: var(--accent); }
+
+    /* ── Buttons ── */
+    .btn {
+      padding: 10px 22px;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 600;
+      font-family: 'Inter', sans-serif;
+      border: none;
+      cursor: pointer;
+      transition: all .2s;
+      display: flex; align-items: center; gap: 8px;
+      white-space: nowrap;
+    }
+    .btn:active { transform: scale(.97); }
+    .btn-primary { background: var(--accent); color: #fff; }
+    .btn-primary:hover { background: #7c74ff; }
+    .btn-success { background: var(--accent2); color: #0a0d14; }
+    .btn-success:hover { background: #00e6b8; }
+    .btn-danger  { background: var(--danger); color: #fff; }
+    .btn-danger:hover { background: #ff6b85; }
+    .btn-ghost   { background: transparent; border: 1px solid var(--border); color: var(--text); }
+    .btn-ghost:hover { border-color: var(--accent); color: var(--accent); }
+    .btn:disabled { opacity: .4; cursor: not-allowed; }
+
+    /* ── Progress bar ── */
+    .progress-wrap { margin-top: 20px; }
+    .progress-label { display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 8px; }
+    .progress-track {
+      background: var(--bg3);
+      border-radius: 999px;
+      height: 10px;
+      overflow: hidden;
+      border: 1px solid var(--border);
+    }
+    .progress-fill {
+      height: 100%;
+      border-radius: 999px;
+      background: linear-gradient(90deg, var(--accent), var(--accent2));
+      transition: width .5s ease;
+      position: relative;
+    }
+    .progress-fill::after {
+      content: '';
+      position: absolute;
+      right: 0; top: 0; bottom: 0;
+      width: 60px;
+      background: linear-gradient(90deg, transparent, rgba(255,255,255,.3));
+    }
+
+    /* ── Live status ── */
+    .live-status {
+      background: var(--bg3);
+      border-radius: 8px;
+      padding: 14px 18px;
+      margin-top: 16px;
+      font-size: 13px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .live-dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: var(--muted);
+      flex-shrink: 0;
+    }
+    .live-dot.running { background: var(--accent2); box-shadow: 0 0 8px var(--accent2); animation: pulse 1.2s infinite; }
+    .live-dot.failed  { background: var(--danger); }
+    @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:.4; } }
+
+    /* ── Status badge ── */
+    .badge {
+      display: inline-flex; align-items: center; gap: 5px;
+      padding: 3px 10px; border-radius: 999px;
+      font-size: 11px; font-weight: 600;
+    }
+    .badge-running { background: rgba(108,99,255,.15); color: var(--accent); border: 1px solid rgba(108,99,255,.3); }
+    .badge-idle    { background: rgba(107,114,128,.15); color: var(--muted); border: 1px solid rgba(107,114,128,.3); }
+    .badge-done    { background: rgba(0,212,170,.15); color: var(--accent2); border: 1px solid rgba(0,212,170,.3); }
+    .badge-failed  { background: rgba(255,77,109,.15); color: var(--danger); border: 1px solid rgba(255,77,109,.3); }
+
+    /* ── Subject pending table ── */
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    thead th {
+      text-align: left; padding: 10px 14px;
+      color: var(--muted); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: .06em;
+      border-bottom: 1px solid var(--border);
+    }
+    tbody tr { border-bottom: 1px solid var(--border); transition: background .15s; }
+    tbody tr:last-child { border-bottom: none; }
+    tbody tr:hover { background: rgba(255,255,255,.02); }
+    tbody td { padding: 12px 14px; }
+    .mono { font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--muted); }
+
+    /* ── Error list ── */
+    .error-list {
+      max-height: 160px; overflow-y: auto;
+      background: rgba(255,77,109,.05);
+      border: 1px solid rgba(255,77,109,.2);
+      border-radius: 8px; padding: 12px 16px;
+      font-size: 12px; font-family: 'JetBrains Mono', monospace;
+      color: #ff8fa3; margin-top: 12px;
+      display: none;
+    }
+    .error-list.visible { display: block; }
+    .error-list p { margin-bottom: 6px; }
+    .error-list p:last-child { margin-bottom: 0; }
+
+    /* ── Log stream ── */
+    .log-box {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 14px;
+      height: 180px;
+      overflow-y: auto;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px;
+      line-height: 1.7;
+      color: #9ca3af;
+    }
+    .log-box .log-ok     { color: var(--accent2); }
+    .log-box .log-fail   { color: var(--danger); }
+    .log-box .log-info   { color: #818cf8; }
+    .log-box .log-warn   { color: var(--warn); }
+
+    /* ── Divider ── */
+    .divider { height: 1px; background: var(--border); margin: 20px 0; }
+
+    /* ── Responsive ── */
+    @media (max-width: 600px) {
+      .container { padding: 16px; }
+      .controls { flex-direction: column; }
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="logo">⚡</div>
+  <h1>Pre-Generation Dashboard</h1>
+  <span id="headerClock">Loading...</span>
+</header>
+
+<div class="container">
+
+  <!-- Stats row -->
+  <div class="stats-grid">
+    <div class="stat-card">
+      <div class="label">Status</div>
+      <div class="value" id="statStatus" style="font-size:22px;margin-top:10px;">—</div>
+      <div class="glow" style="background:var(--accent);"></div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Total Pending</div>
+      <div class="value" id="statPending">—</div>
+      <div class="sub">across all subjects</div>
+      <div class="glow" style="background:var(--warn);"></div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Done This Run</div>
+      <div class="value" id="statDone">—</div>
+      <div class="sub" id="statDoneSub">questions generated</div>
+      <div class="glow" style="background:var(--accent2);"></div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Failed</div>
+      <div class="value" id="statFailed" style="color:var(--danger);">—</div>
+      <div class="sub">this run</div>
+      <div class="glow" style="background:var(--danger);"></div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Speed</div>
+      <div class="value" id="statSpeed" style="font-size:24px;">—</div>
+      <div class="sub">questions / min</div>
+      <div class="glow" style="background:var(--accent);"></div>
+    </div>
+  </div>
+
+  <!-- Control panel -->
+  <div class="section">
+    <div class="section-header">
+      <span>🎛️</span>
+      <h2>Batch Control</h2>
+      <div id="runBadge" class="badge badge-idle" style="margin-left:auto;">● Idle</div>
+    </div>
+    <div class="section-body">
+      <div class="controls">
+        <div class="field">
+          <label>Subject ID</label>
+          <select id="subjectSelect">
+            <option value="">Loading subjects...</option>
+          </select>
+        </div>
+        <div class="field" style="max-width:200px;">
+          <label>API Base URL</label>
+          <input id="apiBase" type="text" value="" />
+        </div>
+        <button class="btn btn-success" id="btnStart" onclick="startPregen()">▶ Start Batch</button>
+        <button class="btn btn-danger"  id="btnStop"  onclick="stopPregen()" disabled>⏹ Stop</button>
+        <button class="btn btn-ghost"   id="btnRetry" onclick="retryFailed()">↩ Retry Failed</button>
+        <button class="btn btn-ghost"   onclick="refreshAll()">⟳ Refresh</button>
+      </div>
+
+      <!-- Progress -->
+      <div class="progress-wrap" id="progressWrap" style="display:none;">
+        <div class="progress-label">
+          <span id="progressLabel">Processing...</span>
+          <span id="progressPct">0%</span>
+        </div>
+        <div class="progress-track">
+          <div class="progress-fill" id="progressFill" style="width:0%"></div>
+        </div>
+      </div>
+
+      <!-- Live status line -->
+      <div class="live-status" id="liveStatus">
+        <div class="live-dot" id="liveDot"></div>
+        <div id="liveText">Not running. Select a subject and click Start.</div>
+      </div>
+
+      <!-- Error list -->
+      <div class="error-list" id="errorList"></div>
+    </div>
+  </div>
+
+  <!-- Create Subject -->
+  <div class="section">
+    <div class="section-header"><span>🏷️</span><h2>Create New Subject</h2></div>
+    <div class="section-body">
+      <div class="controls">
+        <div class="field"><label>Subject Name</label><input id="newSubjectName" type="text" placeholder="e.g. Physics Grade 10" /></div>
+        <div class="field"><label>Description (optional)</label><input id="newSubjectDesc" type="text" placeholder="Brief description" /></div>
+        <button class="btn btn-primary" onclick="createSubject()">+ Create Subject</button>
+      </div>
+      <div id="subjectResult" style="margin-top:12px;font-size:13px;color:var(--muted);"></div>
+    </div>
+  </div>
+
+  <!-- Upload Document -->
+  <div class="section">
+    <div class="section-header"><span>📄</span><h2>Upload Document</h2></div>
+    <div class="section-body">
+      <div class="controls" style="flex-wrap:wrap;">
+        <div class="field">
+          <label>Subject</label>
+          <select id="docSubject"><option value="">— Select subject —</option></select>
+        </div>
+        <div class="field">
+          <label>Document Title</label>
+          <input id="docTitle" type="text" placeholder="e.g. Chapter 3 - Gravitation" />
+        </div>
+        <div class="field" style="max-width:160px;">
+          <label>Language</label>
+          <select id="docLang">
+            <option value="hi-IN">Hindi (hi-IN)</option>
+            <option value="en-IN">English (en-IN)</option>
+            <option value="ta-IN">Tamil (ta-IN)</option>
+            <option value="te-IN">Telugu (te-IN)</option>
+            <option value="kn-IN">Kannada (kn-IN)</option>
+            <option value="bn-IN">Bengali (bn-IN)</option>
+            <option value="mr-IN">Marathi (mr-IN)</option>
+          </select>
+        </div>
+        <div class="field" style="flex:2;">
+          <label>Pre-seed Questions (one per line, optional)</label>
+          <textarea id="docQuestions" rows="2" style="background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:10px 14px;color:var(--text);font-size:13px;font-family:'Inter',sans-serif;resize:vertical;outline:none;" placeholder="What is Newton's 2nd law?&#10;Explain gravitational force..."></textarea>
+        </div>
+        <div class="field" style="max-width:220px;">
+          <label>PDF / TXT / DOCX File</label>
+          <input id="docFile" type="file" accept=".pdf,.txt,.docx,.doc" style="background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:8px 12px;color:var(--text);font-size:13px;cursor:pointer;" />
+        </div>
+        <button class="btn btn-success" onclick="uploadDocument()" id="btnUpload">⬆ Upload & Process</button>
+      </div>
+      <div id="uploadProgress" style="margin-top:12px;display:none;">
+        <div class="progress-track"><div class="progress-fill" id="uploadFill" style="width:0%"></div></div>
+        <div id="uploadStatus" style="font-size:12px;color:var(--muted);margin-top:6px;">Uploading...</div>
+      </div>
+      <div id="uploadResult" style="margin-top:12px;font-size:13px;color:var(--muted);"></div>
+    </div>
+  </div>
+
+  <!-- Manual Question Add -->
+  <div class="section">
+    <div class="section-header"><span>✏️</span><h2>Add Question Manually</h2></div>
+    <div class="section-body">
+      <div class="controls">
+        <div class="field">
+          <label>Subject</label>
+          <select id="manualSubject"><option value="">— Select subject —</option></select>
+        </div>
+        <div class="field" style="flex:3;">
+          <label>Question</label>
+          <input id="manualQuestion" type="text" placeholder="e.g. What is Newton's Second Law?" />
+        </div>
+        <button class="btn btn-primary" onclick="addQuestion()">+ Add to Queue</button>
+      </div>
+      <div id="addResult" style="margin-top:12px;font-size:13px;color:var(--muted);"></div>
+    </div>
+  </div>
+
+  <!-- Pending by subject -->
+  <div class="section">
+    <div class="section-header">
+      <span>📋</span>
+      <h2>Pending by Subject</h2>
+      <button class="btn btn-ghost" style="margin-left:auto;padding:6px 14px;font-size:12px;" onclick="loadPending()">Refresh</button>
+    </div>
+    <div class="section-body" style="padding:0;">
+      <table>
+        <thead>
+          <tr>
+            <th>Subject ID</th>
+            <th>Pending</th>
+            <th>Action</th>
+          </tr>
+        </thead>
+        <tbody id="pendingTable">
+          <tr><td colspan="3" style="text-align:center;padding:24px;color:var(--muted);">Loading...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Log stream -->
+  <div class="section">
+    <div class="section-header">
+      <span>📜</span>
+      <h2>Live Log</h2>
+      <button class="btn btn-ghost" style="margin-left:auto;padding:6px 14px;font-size:12px;" onclick="clearLog()">Clear</button>
+    </div>
+    <div class="section-body" style="padding:16px;">
+      <div class="log-box" id="logBox">
+        <span class="log-info">[system] Dashboard initialized. Waiting for batch...</span>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+  // Auto-detect API base from current page URL (works locally and remotely)
+  function autoDetectBase() {
+    const input = document.getElementById('apiBase');
+    if (!input.value) {
+      // If served from the API itself (e.g. http://server:8000/pregen-dashboard)
+      // use the same origin. Fallback to localhost:8000.
+      const loc = window.location;
+      if (loc.protocol !== 'file:') {
+        input.value = `${loc.protocol}//${loc.hostname}:${loc.port || 8000}`;
+      } else {
+        input.value = 'http://localhost:8000';
+      }
+    }
+  }
+  const API = () => document.getElementById('apiBase').value.replace(/\/$/, '');
+
+  // ── Clock ────────────────────────────────────────────────────────────────────
+  function updateClock() {
+    document.getElementById('headerClock').textContent =
+      new Date().toLocaleTimeString('en-IN', { hour12: false });
+  }
+  updateClock();
+  setInterval(updateClock, 1000);
+
+  // ── Log helper ───────────────────────────────────────────────────────────────
+  function log(msg, type = 'info') {
+    const box = document.getElementById('logBox');
+    const ts = new Date().toLocaleTimeString('en-IN', { hour12: false });
+    const el = document.createElement('div');
+    el.className = `log-${type}`;
+    el.textContent = `[${ts}] ${msg}`;
+    box.appendChild(el);
+    box.scrollTop = box.scrollHeight;
+  }
+  function clearLog() { document.getElementById('logBox').innerHTML = ''; }
+
+  // ── Load subjects ────────────────────────────────────────────────────────────
+  async function loadSubjects() {
+    try {
+      const r = await fetch(`${API()}/subjects`);
+      const d = await r.json();
+      const selIds = ['subjectSelect','manualSubject','docSubject'];
+      selIds.forEach(id => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.innerHTML = '<option value="">— Select subject —</option>';
+        (d.subjects || []).forEach(s => {
+          const o = document.createElement('option');
+          o.value = s.subject_id;
+          o.textContent = `${s.name || s.subject_id.slice(0,20)}  (${s.qa_count} QA, ${s.document_count} docs)`;
+          el.appendChild(o);
+        });
+      });
+      log(`Loaded ${d.subjects?.length || 0} subjects`, 'ok');
+    } catch (e) {
+      log(`Failed to load subjects: ${e.message}`, 'fail');
+    }
+  }
+
+  // ── Load pending count table ─────────────────────────────────────────────────
+  async function loadPending() {
+    try {
+      const r = await fetch(`${API()}/pregen/pending-count`);
+      const d = await r.json();
+      document.getElementById('statPending').textContent = d.total ?? '?';
+      const tbody = document.getElementById('pendingTable');
+      if (!d.by_subject || d.by_subject.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="3" style="text-align:center;padding:24px;color:var(--muted);">No pending rows 🎉</td></tr>';
+        return;
+      }
+      tbody.innerHTML = d.by_subject.map(s => `
+        <tr>
+          <td class="mono">${s.subject_id || '<em style="color:var(--muted)">null</em>'}</td>
+          <td><span style="font-weight:700;color:${s.pending > 0 ? 'var(--warn)' : 'var(--accent2)'}">${s.pending}</span></td>
+          <td>
+            ${s.subject_id ? `<button class="btn btn-ghost" style="padding:4px 12px;font-size:12px;"
+              onclick="quickStart('${s.subject_id}')">▶ Start</button>` : '—'}
+          </td>
+        </tr>
+      `).join('');
+    } catch (e) {
+      log(`Pending load error: ${e.message}`, 'fail');
+    }
+  }
+
+  function quickStart(subjectId) {
+    document.getElementById('subjectSelect').value = subjectId;
+    startPregen();
+  }
+
+  // ── Status polling ───────────────────────────────────────────────────────────
+  let pollTimer = null;
+
+  async function pollStatus() {
+    try {
+      const r = await fetch(`${API()}/pregen/status`);
+      const d = await r.json();
+      updateStatusUI(d);
+
+      if (d.running) {
+        pollTimer = setTimeout(pollStatus, 2000);
+      } else {
+        clearTimeout(pollTimer);
+        if (d.done > 0 || d.failed > 0) {
+          log(`Batch finished — done=${d.done} failed=${d.failed} elapsed=${d.elapsed_seconds ? Math.round(d.elapsed_seconds/60) + 'min' : '?'}`, 'ok');
+        }
+        await loadPending();
+        document.getElementById('btnStart').disabled = false;
+        document.getElementById('btnStop').disabled  = true;
+      }
+    } catch (e) {
+      log(`Status poll error: ${e.message}`, 'fail');
+      clearTimeout(pollTimer);
+    }
+  }
+
+  function updateStatusUI(d) {
+    // Badge
+    const badge = document.getElementById('runBadge');
+    if (d.running) {
+      badge.className = 'badge badge-running';
+      badge.textContent = '● Running';
+    } else if (d.failed > 0 && d.done === 0) {
+      badge.className = 'badge badge-failed';
+      badge.textContent = '● Failed';
+    } else if (d.done > 0) {
+      badge.className = 'badge badge-done';
+      badge.textContent = '✓ Done';
+    } else {
+      badge.className = 'badge badge-idle';
+      badge.textContent = '● Idle';
+    }
+
+    // Stats
+    document.getElementById('statStatus').innerHTML = d.running
+      ? '<span class="badge badge-running" style="font-size:14px;">● Running</span>'
+      : '<span class="badge badge-idle" style="font-size:14px;">● Idle</span>';
+    document.getElementById('statDone').textContent    = d.done ?? 0;
+    document.getElementById('statFailed').textContent  = d.failed ?? 0;
+    document.getElementById('statSpeed').textContent   = d.questions_per_minute?.toFixed(1) ?? '—';
+
+    // Live status line
+    const dot  = document.getElementById('liveDot');
+    const text = document.getElementById('liveText');
+    dot.className = `live-dot ${d.running ? 'running' : (d.failed > 0 ? 'failed' : '')}`;
+    if (d.running) {
+      text.textContent = d.current_question
+        ? `Processing: "${d.current_question}"`
+        : 'Running batch...';
+    } else {
+      text.textContent = d.done > 0
+        ? `Completed. ${d.done} generated, ${d.failed} failed.`
+        : 'Not running.';
+    }
+
+    // Progress bar
+    const wrap = document.getElementById('progressWrap');
+    if (d.running && d.total > 0) {
+      wrap.style.display = 'block';
+      const pct = Math.round((d.done / d.total) * 100);
+      document.getElementById('progressFill').style.width  = `${pct}%`;
+      document.getElementById('progressPct').textContent   = `${pct}%`;
+      document.getElementById('progressLabel').textContent =
+        `${d.done} / ${d.total} — Subject: ${(d.subject_id || '').slice(0,18)}…`;
+    } else if (!d.running && d.total > 0) {
+      wrap.style.display = 'block';
+    }
+
+    // Errors
+    const errDiv = document.getElementById('errorList');
+    if (d.last_errors && d.last_errors.length > 0) {
+      errDiv.classList.add('visible');
+      errDiv.innerHTML = d.last_errors.map(e => `<p>✗ ${e}</p>`).join('');
+    } else {
+      errDiv.classList.remove('visible');
+    }
+  }
+
+  // ── Start ────────────────────────────────────────────────────────────────────
+  async function startPregen() {
+    const subjectId = document.getElementById('subjectSelect').value;
+    if (!subjectId) { alert('Please select a Subject ID first.'); return; }
+
+    log(`Starting pre-generation for subject=${subjectId}`, 'info');
+    document.getElementById('btnStart').disabled = true;
+    document.getElementById('btnStop').disabled  = false;
+
+    try {
+      const r = await fetch(`${API()}/pregen/start`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ subjectId: subjectId })
+      });
+      const d = await r.json();
+      if (d.error) {
+        log(`Start error: ${d.error}`, 'fail');
+        document.getElementById('btnStart').disabled = false;
+        document.getElementById('btnStop').disabled  = true;
+        return;
+      }
+      log(`Batch started — ${d.message || 'OK'}`, 'ok');
+      pollTimer = setTimeout(pollStatus, 1500);
+    } catch (e) {
+      log(`Start failed: ${e.message}`, 'fail');
+      document.getElementById('btnStart').disabled = false;
+      document.getElementById('btnStop').disabled  = true;
+    }
+  }
+
+  // ── Stop ─────────────────────────────────────────────────────────────────────
+  async function stopPregen() {
+    log('Sending stop signal...', 'warn');
+    try {
+      const r = await fetch(`${API()}/pregen/stop`, { method: 'POST' });
+      const d = await r.json();
+      log(`Stop: ${d.message || 'OK'}`, 'warn');
+    } catch (e) { log(`Stop error: ${e.message}`, 'fail'); }
+  }
+
+  // ── Retry failed ─────────────────────────────────────────────────────────────
+  async function retryFailed() {
+    const subjectId = document.getElementById('subjectSelect').value;
+    if (!subjectId) { alert('Select a subject first.'); return; }
+    log(`Retrying failed rows for subject=${subjectId}`, 'info');
+    try {
+      const r = await fetch(`${API()}/pregen/retry-failed`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ subjectId: subjectId })
+      });
+      const d = await r.json();
+      log(`Retry: ${d.message || JSON.stringify(d)}`, 'ok');
+      await loadPending();
+    } catch (e) { log(`Retry error: ${e.message}`, 'fail'); }
+  }
+
+  // ── Add question manually ────────────────────────────────────────────────────
+  async function addQuestion() {
+    const subjectId = document.getElementById('manualSubject').value;
+    const question  = document.getElementById('manualQuestion').value.trim();
+    const resultEl  = document.getElementById('addResult');
+    if (!subjectId) { resultEl.textContent = '⚠ Select a subject.'; resultEl.style.color='var(--warn)'; return; }
+    if (!question)  { resultEl.textContent = '⚠ Enter a question.';  resultEl.style.color='var(--warn)'; return; }
+    try {
+      const r = await fetch(`${API()}/pregen/add-question`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ subjectId, question })
+      });
+      const d = await r.json();
+      if (r.ok) {
+        resultEl.textContent = `✓ Added: "${question.slice(0,60)}"`;
+        resultEl.style.color = 'var(--accent2)';
+        document.getElementById('manualQuestion').value = '';
+        log(`Question added to queue: ${question.slice(0,60)}`, 'ok');
+        await loadPending();
+      } else {
+        resultEl.textContent = `✗ ${d.detail || JSON.stringify(d)}`;
+        resultEl.style.color = 'var(--danger)';
+      }
+    } catch(e) {
+      resultEl.textContent = `✗ ${e.message}`;
+      resultEl.style.color = 'var(--danger)';
+    }
+  }
+
+  // ── Create Subject ───────────────────────────────────────────────────────────
+  async function createSubject() {
+    const name = document.getElementById('newSubjectName').value.trim();
+    const desc = document.getElementById('newSubjectDesc').value.trim();
+    const resultEl = document.getElementById('subjectResult');
+    if (!name) { resultEl.textContent = '⚠ Enter a subject name.'; resultEl.style.color='var(--warn)'; return; }
+    try {
+      const r = await fetch(`${API()}/subjects`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, description: desc })
+      });
+      const d = await r.json();
+      if (r.ok) {
+        resultEl.textContent = `✓ Subject created — ID: ${d.subject_id || d.id}`;
+        resultEl.style.color = 'var(--accent2)';
+        document.getElementById('newSubjectName').value = '';
+        document.getElementById('newSubjectDesc').value = '';
+        log(`Subject created: ${name}`, 'ok');
+        await loadSubjects();
+      } else {
+        resultEl.textContent = `✗ ${d.detail || JSON.stringify(d)}`;
+        resultEl.style.color = 'var(--danger)';
+      }
+    } catch(e) {
+      resultEl.textContent = `✗ ${e.message}`;
+      resultEl.style.color = 'var(--danger)';
+    }
+  }
+
+  // ── Upload Document ──────────────────────────────────────────────────────────
+  async function uploadDocument() {
+    const subjectId = document.getElementById('docSubject').value;
+    const title     = document.getElementById('docTitle').value.trim();
+    const language  = document.getElementById('docLang').value;
+    const questions = document.getElementById('docQuestions').value.trim();
+    const fileInput = document.getElementById('docFile');
+    const resultEl  = document.getElementById('uploadResult');
+    const progWrap  = document.getElementById('uploadProgress');
+    const progFill  = document.getElementById('uploadFill');
+    const progStatus= document.getElementById('uploadStatus');
+    if (!subjectId) { resultEl.textContent='⚠ Select a subject.'; resultEl.style.color='var(--warn)'; return; }
+    if (!title)     { resultEl.textContent='⚠ Enter a document title.'; resultEl.style.color='var(--warn)'; return; }
+    if (!fileInput.files.length) { resultEl.textContent='⚠ Choose a file.'; resultEl.style.color='var(--warn)'; return; }
+    const fd = new FormData();
+    fd.append('subject_id', subjectId);
+    fd.append('title', title);
+    fd.append('language', language);
+    fd.append('questions', questions);
+    fd.append('file', fileInput.files[0]);
+    document.getElementById('btnUpload').disabled = true;
+    progWrap.style.display = 'block';
+    progFill.style.width = '30%';
+    progStatus.textContent = 'Uploading file...';
+    resultEl.textContent = '';
+    try {
+      const r = await fetch(`${API()}/documents/upload`, { method: 'POST', body: fd });
+      progFill.style.width = '70%';
+      progStatus.textContent = 'Processing document...';
+      const d = await r.json();
+      progFill.style.width = '100%';
+      if (r.ok) {
+        progStatus.textContent = 'Done!';
+        resultEl.textContent = `✓ Document uploaded — ID: ${d.document_id || d.id} | ${d.chunks_created || '?'} chunks created`;
+        resultEl.style.color = 'var(--accent2)';
+        fileInput.value = '';
+        document.getElementById('docTitle').value = '';
+        document.getElementById('docQuestions').value = '';
+        log(`Document uploaded: ${title} (${d.chunks_created || '?'} chunks)`, 'ok');
+        await loadSubjects();
+        await loadPending();
+      } else {
+        progStatus.textContent = 'Failed.';
+        resultEl.textContent = `✗ ${d.detail || JSON.stringify(d)}`;
+        resultEl.style.color = 'var(--danger)';
+      }
+    } catch(e) {
+      progStatus.textContent = 'Error.';
+      resultEl.textContent = `✗ ${e.message}`;
+      resultEl.style.color = 'var(--danger)';
+    } finally {
+      document.getElementById('btnUpload').disabled = false;
+    }
+  }
+
+  // ── Refresh all ──────────────────────────────────────────────────────────────
+  async function refreshAll() {
+    log('Refreshing...', 'info');
+    await Promise.all([loadSubjects(), loadPending(), pollStatus()]);
+  }
+
+  // ── Init ─────────────────────────────────────────────────────────────────────
+  (async () => {
+    autoDetectBase();
+    await loadSubjects();
+    await loadPending();
+    await pollStatus();
+  })();
+</script>
+</body>
+</html>
