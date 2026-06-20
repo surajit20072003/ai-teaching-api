@@ -33,6 +33,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.slide_generator import generate_slides
 from core.b2_client import upload_to_b2
 from core.embeddings import embed_async, vec_to_pg_str
+from core.tts_utils import prepare_for_tts
 
 # ── Environment ────────────────────────────────────────────────────────────────
 VOXCPM_URL     = os.getenv("VOXCPM_URL",    "http://host.docker.internal:7861")
@@ -273,6 +274,9 @@ async def _process_slide(idx: int, slide: dict, cache_id: str, language: str):
     )
 
     narration = slide.get("narration") or slide.get("content") or ""
+
+    # Clean greetings + normalize dashes/math/markdown before VoxCPM TTS
+    narration = prepare_for_tts(narration)
 
     # Run image AND audio for this slide at the same time
     img_result, wav_result = await asyncio.gather(

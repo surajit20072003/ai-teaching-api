@@ -37,13 +37,16 @@ SLIDE_PROMPT = (
     "Generate a 6-7 slide mini-lecture for this student question: \"{question}\"\n\n"
     "RULES:\n"
     "1. Each slide covers a DISTINCT sub-topic — no repetition across slides.\n"
-    "2. Narration: 200-250 words. Conversational teacher voice. Include a concrete example in EVERY slide.\n"
+    "2. Narration: MINIMUM 220 words. Count them. Conversational teacher voice. "
+    "   Explain step-by-step. Include a concrete real-life example in EVERY slide. "
+    "   Do NOT start with 'Hello', 'Welcome', 'Good morning', or any greeting.\n"
     "3. 'content' field: clear 2-3 sentence explanation of that slide's sub-topic.\n"
     "4. 'infographic' field: describe a SPECIFIC visual (e.g. 'Factor tree of 72 = 2x2x2x3x3', NOT 'diagram of concept').\n"
     "5. 'keyPoints': exactly 3 crisp bullet points for the slide.\n"
     "6. 'formula': LaTeX string if slide has math, else empty string \"\".\n"
     "7. Last slide MUST have isStory: true — a real-world analogy or story that makes the concept unforgettable.\n"
     "8. Second-to-last slide MUST have isTips: true — mnemonic tricks and memory aids.\n"
+    "9. You MUST generate AT LEAST 5 slides. Aim for 6-7.\n"
 ) + _BASE_FORMAT
 
 RAG_PROMPT = (
@@ -58,7 +61,8 @@ RAG_PROMPT = (
     "1. ONLY use facts, examples, definitions, and numbers from the document. DO NOT invent anything.\n"
     "2. Quote the document's specific examples verbatim where possible (e.g. if doc says '4^n = 2^2n', use it).\n"
     "3. If the document has numbered theorems or definitions, reference them by number (e.g. 'Theorem 1.2 states...').\n"
-    "4. Narration: 200-250 words. Sound like a teacher reading the textbook aloud and explaining each line step by step.\n"
+    "4. Narration: MINIMUM 220 words. Count them. Sound like a teacher reading the textbook aloud and "
+    "   explaining each line step by step. Do NOT start with 'Hello', 'Welcome', or any greeting.\n"
     "5. 'content' field: 2-3 sentence direct summary pulled from document text.\n"
     "6. 'infographic' field: describe a SPECIFIC diagram tied to the document's example\n"
     "   (e.g. 'Factor tree: 12 = 2 x 2 x 3, shown as branching tree diagram' NOT 'diagram of concept').\n"
@@ -68,6 +72,7 @@ RAG_PROMPT = (
     "10. Last slide MUST have isStory: true — a real-world analogy tied directly to the document topic.\n"
     "11. Second-to-last slide MUST have isTips: true — memory tricks for the document's key theorems/formulas.\n"
     "12. Add \"is_doc_grounded\": true to the JSON root.\n"
+    "13. You MUST generate AT LEAST 5 slides. Aim for 6-7.\n"
 ) + _BASE_FORMAT.replace(
     '"presentation_slides"',
     '"is_doc_grounded": true,\n  "presentation_slides"'
@@ -103,18 +108,32 @@ def _parse_slides(raw: str) -> dict:
         slides.append({
             "title": "Tips & Tricks to Remember",
             "content": "Key memory aids for this concept",
-            "narration": "Here are tips to remember this concept easily. Use mnemonics and visual associations.",
+            "narration": "Here are tips to remember this concept easily. Use mnemonics and visual associations. "
+                         "First, create a mental image of the key idea. Second, link it to something you already know. "
+                         "Third, practice writing the formula or definition three times without looking. "
+                         "Fourth, explain it out loud to someone as if you are the teacher. "
+                         "Fifth, make a short note card with the key formula on one side and an example on the other. "
+                         "These five techniques together will lock this concept in your long-term memory.",
             "keyPoints": ["Make a diagram", "Use mnemonics", "Practice with examples"],
-            "formula": "", "infographic": "Lightbulb with tips", "isStory": False, "isTips": True
+            "formula": "", "infographic": "Lightbulb with numbered tips list", "isStory": False, "isTips": True
         })
     if not any(s.get("isStory") for s in slides):
         slides.append({
             "title": "A Story to Remember",
             "content": "Real world analogy",
-            "narration": "Let me tell you a story that will help you remember this concept forever.",
+            "narration": "Let me tell you a story that will help you remember this concept forever. "
+                         "Imagine you are explaining this to a friend who has never studied this topic before. "
+                         "You would start with something they already know from daily life, then connect it step by step "
+                         "to the idea we just learned. This is exactly how great teachers make difficult concepts stick. "
+                         "The real world is full of examples of this concept if you look carefully. "
+                         "So next time you encounter this in an exam or in life, you will recognize it immediately "
+                         "because you have this story anchored in your memory.",
             "keyPoints": ["Real world connection", "Easy to visualize", "Never forget"],
-            "formula": "", "infographic": "Story illustration", "isStory": True, "isTips": False
+            "formula": "", "infographic": "Story illustration with characters", "isStory": True, "isTips": False
         })
+    # Enforce minimum 5 slides
+    if len(slides) < 5:
+        logger.warning(f"[SlideGen] Only {len(slides)} slides generated — model produced too few. Check prompt/token limit.")
     data["presentation_slides"] = slides
     return data
 
@@ -130,9 +149,9 @@ async def _generate_via_ollama(prompt: str) -> str:
     payload = {
         "model":   OLLAMA_MODEL,
         "stream":  False,
-        "format":  "json",                                   # Forces Ollama to output valid JSON always
+        "format":  "json",                                    # Forces Ollama to output valid JSON always
         "messages": [{"role": "user", "content": prompt}],
-        "options": {"temperature": 0.7, "num_predict": 6000},  # 6000 tokens → richer 150-250 word narrations
+        "options": {"temperature": 0.7, "num_predict": 8000},  # 8000 tokens → richer 220+ word narrations
     }
     logger.info(f"[SlideGen/Ollama] POST {url} model={OLLAMA_MODEL} timeout={OLLAMA_TIMEOUT}s")
     async with httpx.AsyncClient(timeout=OLLAMA_TIMEOUT) as client:

@@ -1,4 +1,5 @@
 import httpx, os, base64, asyncio, re, subprocess, tempfile
+from core.tts_utils import prepare_for_tts
 
 # Sarvam TTS Growth plan: ~60 requests/min
 # Each slide narration = ~6 chunks = 6 API calls
@@ -8,7 +9,7 @@ SARVAM_TTS_SEMAPHORE = asyncio.Semaphore(20)
 
 # Sarvam language code → speaker mapping
 LANGUAGE_MAP = {
-    "en-IN": {"lang": "hi-IN",  "speaker": "abhilash"},   # English narration → Hindi speaker
+    "en-IN": {"lang": "en-IN",  "speaker": "abhilash"},   # English — DEFAULT
     "hi-IN": {"lang": "hi-IN",  "speaker": "abhilash"},
     "ta-IN": {"lang": "ta-IN",  "speaker": "abhilash"},
     "te-IN": {"lang": "te-IN",  "speaker": "abhilash"},
@@ -58,13 +59,19 @@ def _merge_wav_sync(parts: list[bytes]) -> bytes:
         return open(out, "rb").read()
 
 
-async def synthesize(text: str, language_code: str = "hi-IN", gender: str = "male") -> str:
+async def synthesize(text: str, language_code: str = "en-IN", gender: str = "male") -> str:
     """
     Convert text to speech using Sarvam AI TTS (bulbul:v2).
     Returns base64-encoded WAV audio.
     Auto-chunks text at 250-char limit.
+    Default language: en-IN (English).
     """
-    cfg = LANGUAGE_MAP.get(language_code, LANGUAGE_MAP["hi-IN"])
+    # Clean greeting filler and normalize dashes/math/markdown before sending to TTS
+    text = prepare_for_tts(text)
+    if not text:
+        raise ValueError("TTS text is empty after normalization")
+
+    cfg = LANGUAGE_MAP.get(language_code, LANGUAGE_MAP["en-IN"])
     chunks = _split_text(text)
     audio_parts = []
 

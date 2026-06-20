@@ -498,8 +498,23 @@ async def teaching_assistant(body: dict, db: AsyncSession = Depends(get_db)):
 
     # ── GENERATE (all cache layers exhausted) ──────────
     # [L5] Document RAG — find top 3 chunks from subject's docs
-    rag_context = ""
+    # STRICT: if no document context found, do NOT generate via general LLM
+    rag_context     = ""
     is_doc_grounded = False
+
+    _NO_CONTENT_RESPONSE = {
+        "no_content":  True,
+        "blocked":     True,
+        "reason":      "no_document_context",
+        "message": (
+            f"No study material found for this question"
+            f"{' in ' + subject_name if subject_name else ''}. "
+            "Please ask your teacher to upload relevant content, "
+            "or try searching for this topic."
+        ),
+        "suggestion": "search_topic",
+    }
+
     try:
         if not query_vec:  # may already be computed from L4
             query_vec = await embed_async(question)
@@ -518,17 +533,26 @@ async def teaching_assistant(body: dict, db: AsyncSession = Depends(get_db)):
         """)
         rag_rows = (await db.execute(rag_sql, {"vec": vec_str, "subj": subject_id})).fetchall()
 
-        if rag_rows:
-            rag_context = "\n\n".join(
-                f"[{r.doc_title} / {r.section_title or 'Section'}]\n{r.chunk_text}"
-                for r in rag_rows
-            )
-            is_doc_grounded = True
-            print(f"[L5 RAG] {len(rag_rows)} chunks found for '{question[:60]}'")
+        if not rag_rows:
+            # No document content — block generation, tell frontend to search
+            print(f"[L5 RAG] 0 chunks found for '{question[:60]}' — blocking generation")
+            return _NO_CONTENT_RESPONSE
+
+        # Document context found — build grounded prompt
+        rag_context = "\n\n".join(
+            f"[{r.doc_title} / {r.section_title or 'Section'}]\n{r.chunk_text}"
+            for r in rag_rows
+        )
+        is_doc_grounded = True
+        print(f"[L5 RAG] {len(rag_rows)} chunks found → grounded generation for '{question[:60]}'")
+
     except Exception as e:
-        print(f"[L5 RAG] failed (non-fatal, using general knowledge): {e}")
+        # RAG lookup failed — still block, don't hallucinate
+        print(f"[L5 RAG] lookup failed: {e} — blocking generation (no fallback)")
+        return _NO_CONTENT_RESPONSE
 
     slides_data = await generate_slides(question, subject_name, context=rag_context)
+
     slides      = slides_data.get("presentation_slides", [])
     cache_id    = str(uuid.uuid4())
 
