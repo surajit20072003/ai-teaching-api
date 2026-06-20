@@ -54,6 +54,8 @@ class Document(Base):
 
     id                   = Column(UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid())
     subject_id           = Column(String, nullable=False)
+    chapter_id           = Column(String, nullable=True)
+    topic_id             = Column(String, nullable=True)
     title                = Column(Text, nullable=False)
     filename             = Column(Text, nullable=False)
     local_raw_path       = Column(Text, nullable=False)        # /sdb-disk/.../raw/{filename}
@@ -99,8 +101,64 @@ class Subject(Base):
     id          = Column(UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid())
     subject_id  = Column(String, unique=True, nullable=False)  # the UUID used everywhere else
     name        = Column(Text, nullable=False)
+    slug        = Column(String, nullable=True)
     description = Column(Text, nullable=True)
     created_at  = Column(TIMESTAMP(timezone=True), server_default=func.now())
+
+
+# -- New: Chapter --------------------------------------------------------------
+class Chapter(Base):
+    __tablename__ = "chapters"
+
+    id             = Column(UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid())
+    subject_id     = Column(String, nullable=False)       # matches subjects.subject_id
+    chapter_number = Column(Integer, nullable=False)
+    title          = Column(Text, nullable=False)
+    created_at     = Column(TIMESTAMP(timezone=True), server_default=func.now())
+
+
+# -- New: Topic ----------------------------------------------------------------
+class Topic(Base):
+    __tablename__ = "topics"
+
+    id           = Column(UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid())
+    chapter_id   = Column(UUID(as_uuid=True), ForeignKey("chapters.id", ondelete="CASCADE"), nullable=False)
+    subject_id   = Column(String, nullable=False)         # denormalized
+    topic_number = Column(String, nullable=False)         # e.g. "1.2"
+    title        = Column(Text, nullable=False)
+    created_at   = Column(TIMESTAMP(timezone=True), server_default=func.now())
+
+
+# -- New: Question (rich question bank) ----------------------------------------
+class Question(Base):
+    __tablename__ = "questions"
+
+    id                      = Column(UUID(as_uuid=True), primary_key=True)  # preserve external UUID
+    subject_id              = Column(String, nullable=False)
+    chapter_id              = Column(UUID(as_uuid=True), ForeignKey("chapters.id", ondelete="SET NULL"), nullable=True)
+    topic_id                = Column(UUID(as_uuid=True), ForeignKey("topics.id",   ondelete="SET NULL"), nullable=True)
+    source_document_id      = Column(UUID(as_uuid=True), nullable=True)
+    source_document_purpose = Column(String, default="general")
+
+    question_text           = Column(Text, nullable=False)
+    question_type           = Column(String, default="subjective")
+    question_format         = Column(String, default="subjective")   # 'mcq' | 'subjective'
+    options                 = Column(JSONB, default=dict)
+    option_images           = Column(JSONB, default=dict)
+    question_image_url      = Column(Text, nullable=True)
+    correct_answer          = Column(Text, nullable=True)
+    explanation             = Column(Text, nullable=True)
+    difficulty              = Column(String, default="Medium")
+    marks                   = Column(Integer, default=4)
+
+    is_verified             = Column(Boolean, default=False)
+    is_ai_generated         = Column(Boolean, default=True)
+
+    # Pre-gen tracking
+    is_pregen_done          = Column(Boolean, default=False)
+    cache_id                = Column(UUID(as_uuid=True), nullable=True)
+
+    created_at              = Column(TIMESTAMP(timezone=True), server_default=func.now())
 
 
 async def get_db():

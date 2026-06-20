@@ -68,6 +68,16 @@ services:
       retries: 10
     restart: unless-stopped
 
+  # ── Adminer Database GUI ────────────────────────────────
+  adminer:
+    image: adminer
+    container_name: ai-teaching-adminer
+    restart: unless-stopped
+    ports:
+      - "8085:8080"
+    depends_on:
+      - postgres
+
 volumes:
   postgres_data:
   redis_data:

@@ -30,6 +30,8 @@ MAX_FILE_SIZE_MB   = 50
 async def upload_document(
     background_tasks: BackgroundTasks,
     subject_id: str  = Form(...),
+    chapter_id: Optional[str] = Form(None),
+    topic_id:   Optional[str] = Form(None),
     title:      str  = Form(...),
     language:   str  = Form("hi-IN"),
     questions:  str  = Form(""),
@@ -71,8 +73,9 @@ async def upload_document(
 
     # Insert Document row
     doc = Document(
-        id=uuid.UUID(doc_id), subject_id=subject_id, title=title,
-        filename=safe_filename,
+        id=uuid.UUID(doc_id), subject_id=subject_id, 
+        chapter_id=chapter_id, topic_id=topic_id,
+        title=title, filename=safe_filename,
         local_raw_path=result["local_raw_path"],
         local_processed_path=result["local_processed_path"],
         b2_url=b2_url, total_chunks=result["total_chunks"],
@@ -107,11 +110,11 @@ async def upload_document(
         await db.execute(
             text("""
                 INSERT INTO teaching_qa_cache 
-                (id, subject_id, question_hash, question_text, variation_number, pregen_status)
-                VALUES (:id, :subject_id, :question_hash, :question, 1, 'pending')
+                (id, subject_id, chapter_id, topic_id, question_hash, question_text, variation_number, pregen_status)
+                VALUES (:id, :subject_id, :chapter_id, :topic_id, :question_hash, :question, 1, 'pending')
                 ON CONFLICT (question_hash, subject_id, variation_number) DO UPDATE SET pregen_status = 'pending'
             """),
-            {"id": new_q_id, "subject_id": subject_id, "question_hash": q_hash, "question": q_text}
+            {"id": new_q_id, "subject_id": subject_id, "chapter_id": chapter_id, "topic_id": topic_id, "question_hash": q_hash, "question": q_text}
         )
 
     doc.pregen_total = len(question_list)

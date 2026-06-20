@@ -267,3 +267,83 @@ async def process_document(
         "total_chars": len(text),
         "total_chunks": len(chunks),
     }
+
+
+# ── Markdown Import Pipeline (no file upload needed) ────────────────────────
+
+async def chunk_markdown_text(
+    subject_id: str,
+    doc_id: str,
+    markdown_text: str,
+) -> dict:
+    """
+    Ingest a pre-parsed markdown string (from document.parsed_json.content_markdown)
+    into the teaching pipeline — without needing the original file upload.
+
+    Steps:
+      1. Save markdown as extracted.txt on disk  (same path as process_document uses)
+      2. Chunk the text using the existing chunk_text() function
+      3. Embed all chunks using the existing embed_chunks() function
+
+    Returns the same structure as process_document() so all downstream code
+    (document_chunks insertion, pregen, RAG search) works with zero changes:
+    {
+      "local_raw_path":       str  — synthetic path (file not actually present)
+      "local_processed_path": str  — real path to saved extracted.txt
+      "chunks":               list — chunk dicts with embeddings
+      "total_chars":          int
+      "total_chunks":         int
+    }
+    """
+    if not markdown_text or not markdown_text.strip():
+        raise ValueError("content_markdown is empty — cannot ingest document")
+
+    from core.local_storage import (
+        get_doc_processed_path,
+        get_doc_raw_path,
+        ensure_subject_dirs,
+        ensure_doc_dirs,
+        write_processed_text,
+    )
+
+    # Ensure directories exist
+    ensure_subject_dirs(subject_id)
+    ensure_doc_dirs(subject_id, doc_id)
+
+    # Step 1: Save markdown text as extracted.txt (the processed path)
+    local_processed = await write_processed_text(subject_id, doc_id, markdown_text)
+
+    # Synthetic raw path (no actual file, but column is NOT NULL so we need a value)
+    local_raw = get_doc_raw_path(subject_id, doc_id, "imported_from_server.md")
+
+    # Step 2: Chunk the markdown text
+    chunks = chunk_text(markdown_text)
+
+    if not chunks:
+        logger.warning(
+            f"[doc_processor] chunk_markdown_text: no chunks produced for doc={doc_id}. "
+            f"Text length={len(markdown_text)}"
+        )
+        return {
+            "local_raw_path": local_raw,
+            "local_processed_path": local_processed,
+            "chunks": [],
+            "total_chars": len(markdown_text),
+            "total_chunks": 0,
+        }
+
+    # Step 3: Embed all chunks
+    chunks = embed_chunks(chunks)
+
+    logger.info(
+        f"[doc_processor] chunk_markdown_text done: subject={subject_id} doc={doc_id} "
+        f"chars={len(markdown_text):,} chunks={len(chunks)}"
+    )
+
+    return {
+        "local_raw_path": local_raw,
+        "local_processed_path": local_processed,
+        "chunks": chunks,
+        "total_chars": len(markdown_text),
+        "total_chunks": len(chunks),
+    }

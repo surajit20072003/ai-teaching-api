@@ -344,6 +344,14 @@
           <label>Subject</label>
           <select id="docSubject"><option value="">— Select subject —</option></select>
         </div>
+        <div class="field" style="max-width:200px;">
+          <label>Chapter ID (optional)</label>
+          <input id="docChapterId" type="text" placeholder="UUID" />
+        </div>
+        <div class="field" style="max-width:200px;">
+          <label>Topic ID (optional)</label>
+          <input id="docTopicId" type="text" placeholder="UUID" />
+        </div>
         <div class="field">
           <label>Document Title</label>
           <input id="docTitle" type="text" placeholder="e.g. Chapter 3 - Gravitation" />
@@ -394,6 +402,80 @@
         <button class="btn btn-primary" onclick="addQuestion()">+ Add to Queue</button>
       </div>
       <div id="addResult" style="margin-top:12px;font-size:13px;color:var(--muted);"></div>
+    </div>
+  </div>
+
+  <!-- Question Bank Import -->
+  <div class="section">
+    <div class="section-header">
+      <span>📥</span>
+      <h2>Question Bank Import</h2>
+      <span style="margin-left:auto;font-size:12px;color:var(--muted);">Bulk import MCQ / subjective — auto-queues for pre-gen</span>
+    </div>
+    <div class="section-body">
+
+      <!-- Row 1: Subject + Chapter -->
+      <div class="controls" style="margin-bottom:14px;">
+        <div class="field">
+          <label>Subject</label>
+          <select id="impSubject"><option value="">— Select subject —</option></select>
+        </div>
+        <div class="field" style="max-width:130px;">
+          <label>Chapter #</label>
+          <input id="impChapterNum" type="number" min="1" placeholder="e.g. 1" />
+        </div>
+        <div class="field">
+          <label>Chapter Title</label>
+          <input id="impChapterTitle" type="text" placeholder="e.g. Real Numbers" />
+        </div>
+        <div class="field" style="max-width:110px;">
+          <label>Topic #</label>
+          <input id="impTopicNum" type="text" placeholder="e.g. 1.2" />
+        </div>
+        <div class="field">
+          <label>Topic Title</label>
+          <input id="impTopicTitle" type="text" placeholder="e.g. Fundamental Theorem" />
+        </div>
+        <div class="field" style="max-width:140px;">
+          <label>Format</label>
+          <select id="impFormat">
+            <option value="subjective">Subjective</option>
+            <option value="mcq">MCQ</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Row 2: JSON textarea -->
+      <div class="field" style="margin-bottom:14px;">
+        <label>Questions JSON Array</label>
+        <textarea id="impJson" rows="5" style="
+          background:var(--bg3);border:1px solid var(--border);border-radius:8px;
+          padding:10px 14px;color:var(--text);font-size:12px;
+          font-family:'JetBrains Mono',monospace;resize:vertical;outline:none;width:100%;
+          transition:border-color .2s;
+        " placeholder='[{"id":"uuid","question_text":"What is the Fundamental Theorem of Arithmetic?","difficulty":"Medium","marks":4},...]'
+          onfocus="this.style.borderColor='var(--accent)'" onblur="this.style.borderColor='var(--border)'"></textarea>
+      </div>
+
+      <!-- Row 3: Buttons -->
+      <div class="controls" style="align-items:center;">
+        <button class="btn btn-success" id="impBtn" onclick="importQuestions()">📤 Import &amp; Queue</button>
+        <button class="btn btn-primary" onclick="startPregenFromImport()">⚡ Start Pre-gen</button>
+        <button class="btn btn-ghost" onclick="loadImpTopicStats()">📊 Topic Stats</button>
+        <div id="impStatus" style="font-size:13px;color:var(--muted);"></div>
+      </div>
+
+      <!-- Result -->
+      <div id="impResult" style="margin-top:14px;font-size:13px;"></div>
+
+      <!-- Topic stats mini table -->
+      <div id="impTopicStats" style="margin-top:14px;display:none;">
+        <div style="font-size:12px;color:var(--muted);margin-bottom:8px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;">Questions by Topic</div>
+        <table>
+          <thead><tr><th>Chapter</th><th>Topic</th><th>Total</th><th>Pregen Done</th><th>Pending</th><th>Action</th></tr></thead>
+          <tbody id="topicStatsBody"><tr><td colspan="6" style="text-align:center;padding:20px;color:var(--muted);">Click "Topic Stats" to load</td></tr></tbody>
+        </table>
+      </div>
     </div>
   </div>
 
@@ -478,7 +560,7 @@
     try {
       const r = await fetch(`${API()}/subjects`);
       const d = await r.json();
-      const selIds = ['subjectSelect','manualSubject','docSubject'];
+      const selIds = ['subjectSelect','manualSubject','docSubject','impSubject'];
       selIds.forEach(id => {
         const el = document.getElementById(id);
         if (!el) return;
@@ -736,6 +818,8 @@
   // ── Upload Document ──────────────────────────────────────────────────────────
   async function uploadDocument() {
     const subjectId = document.getElementById('docSubject').value;
+    const chapterId = document.getElementById('docChapterId').value.trim();
+    const topicId   = document.getElementById('docTopicId').value.trim();
     const title     = document.getElementById('docTitle').value.trim();
     const language  = document.getElementById('docLang').value;
     const questions = document.getElementById('docQuestions').value.trim();
@@ -749,6 +833,8 @@
     if (!fileInput.files.length) { resultEl.textContent='⚠ Choose a file.'; resultEl.style.color='var(--warn)'; return; }
     const fd = new FormData();
     fd.append('subject_id', subjectId);
+    if (chapterId) fd.append('chapter_id', chapterId);
+    if (topicId)   fd.append('topic_id', topicId);
     fd.append('title', title);
     fd.append('language', language);
     fd.append('questions', questions);
@@ -785,6 +871,180 @@
       resultEl.style.color = 'var(--danger)';
     } finally {
       document.getElementById('btnUpload').disabled = false;
+    }
+  }
+
+  // ── Question Bank Import ────────────────────────────────────────────────────
+  async function importQuestions() {
+    const subjectId    = document.getElementById('impSubject').value;
+    const chapterNum   = document.getElementById('impChapterNum').value.trim();
+    const chapterTitle = document.getElementById('impChapterTitle').value.trim();
+    const topicNum     = document.getElementById('impTopicNum').value.trim();
+    const topicTitle   = document.getElementById('impTopicTitle').value.trim();
+    const fmt          = document.getElementById('impFormat').value;
+    const rawJson      = document.getElementById('impJson').value.trim();
+    const statusEl     = document.getElementById('impStatus');
+    const resultEl     = document.getElementById('impResult');
+
+
+    let questions;
+    try {
+      questions = JSON.parse(rawJson);
+      if (!Array.isArray(questions)) throw new Error('Must be a JSON array');
+    } catch(e) {
+      statusEl.textContent = '❌ Invalid JSON: ' + e.message;
+      statusEl.style.color = 'var(--danger)';
+      return;
+    }
+    questions = questions.map(q => ({ ...q, question_format: fmt }));
+
+    document.getElementById('impBtn').disabled = true;
+    statusEl.textContent = 'Importing…';
+    statusEl.style.color = 'var(--muted)';
+    resultEl.innerHTML   = '';
+
+    // Build UUIDs for chapter/topic (idempotent via ON CONFLICT on server)
+    const chapterId = chapterNum ? crypto.randomUUID() : null;
+    const topicId   = topicNum   ? crypto.randomUUID() : null;
+
+    // Find subject name from dropdown
+    const selEl = document.getElementById('impSubject');
+    const subjectName = selEl.options[selEl.selectedIndex]?.textContent?.split('(')[0].trim() || subjectId;
+
+    try {
+      const body = {
+        subject: { id: subjectId, name: subjectName, slug: subjectId },
+        chapter: chapterNum ? { id: chapterId, chapter_number: parseInt(chapterNum), title: chapterTitle } : {},
+        topic:   topicNum   ? { id: topicId,   topic_number: topicNum,              title: topicTitle   } : {},
+        questions,
+      };
+      const r = await fetch(`${API()}/questions/import`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify(body),
+      });
+      const d = await r.json();
+      if (d.error) throw new Error(d.error);
+
+      statusEl.textContent = '✓ Done';
+      statusEl.style.color = 'var(--accent2)';
+      resultEl.style.color = 'var(--accent2)';
+      resultEl.innerHTML = `
+        <div style="background:rgba(0,212,170,.08);border:1px solid rgba(0,212,170,.25);border-radius:8px;padding:14px;">
+          <strong style="color:var(--accent2);">✓ Import Complete</strong><br><br>
+          📥 Imported: <b>${d.imported}</b> &nbsp;|&nbsp;
+          ⏭ Skipped (duplicate): <b>${d.skipped}</b> &nbsp;|&nbsp;
+          ⚡ Queued for pre-gen: <b>${d.queued_for_pregen}</b>
+          ${d.chapter_id ? `<br>📖 Chapter ID: <code style="font-family:'JetBrains Mono',monospace;color:var(--muted);">${d.chapter_id}</code>` : ''}
+          ${d.topic_id   ? `<br>🏷 Topic ID: <code style="font-family:'JetBrains Mono',monospace;color:var(--muted);">${d.topic_id}</code>`   : ''}
+        </div>`;
+      log(`Imported ${d.imported} questions, queued ${d.queued_for_pregen} for pre-gen`, 'ok');
+      await loadPending();
+    } catch(err) {
+      statusEl.textContent = '';
+      resultEl.innerHTML   = `<span style="color:var(--danger);">✗ ${err.message}</span>`;
+      log(`Import error: ${err.message}`, 'fail');
+    } finally {
+      document.getElementById('impBtn').disabled = false;
+    }
+  }
+
+  async function startPregenFromImport() {
+    const subjectId = document.getElementById('impSubject').value;
+    const statusEl  = document.getElementById('impStatus');
+    const resultEl  = document.getElementById('impResult');
+    if (!subjectId) { statusEl.textContent = '⚠ Select a subject'; statusEl.style.color='var(--warn)'; return; }
+
+    // Also set the main batch-control select so polling works
+    document.getElementById('subjectSelect').value = subjectId;
+
+    log(`Starting pre-gen from import panel for subject=${subjectId}`, 'info');
+    statusEl.textContent = 'Starting…';
+    statusEl.style.color = 'var(--muted)';
+    try {
+      const r = await fetch(`${API()}/pregen/start`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ subjectId, limit: 500 }),
+      });
+      const d = await r.json();
+      if (d.error) throw new Error(d.error);
+      statusEl.textContent = '✓ Pre-gen started';
+      statusEl.style.color = 'var(--accent2)';
+      resultEl.innerHTML   = `<span style="color:var(--accent2);">✓ ${d.message} — ${d.pending_rows ?? 0} rows queued</span>`;
+      log(`Pre-gen started: ${d.message}`, 'ok');
+      document.getElementById('btnStart').disabled = true;
+      document.getElementById('btnStop').disabled  = false;
+      pollTimer = setTimeout(pollStatus, 1500);
+    } catch(err) {
+      statusEl.textContent = '';
+      resultEl.innerHTML   = `<span style="color:var(--danger);">✗ ${err.message}</span>`;
+      log(`Pre-gen start error: ${err.message}`, 'fail');
+    }
+  }
+
+  async function loadImpTopicStats() {
+    const subjectId = document.getElementById('impSubject').value;
+    const statsDiv  = document.getElementById('impTopicStats');
+    const tbody     = document.getElementById('topicStatsBody');
+    if (!subjectId) { document.getElementById('impStatus').textContent = '⚠ Select a subject'; return; }
+
+    statsDiv.style.display = 'block';
+    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:16px;color:var(--muted);">Loading…</td></tr>';
+    try {
+      const r = await fetch(`${API()}/questions?subject_id=${encodeURIComponent(subjectId)}&limit=200`);
+      const d = await r.json();
+      const qs = d.questions || [];
+
+      // Group by topic
+      const groups = {};
+      qs.forEach(q => {
+        const key = q.topic_id || '__none__';
+        if (!groups[key]) groups[key] = { chapter_title: q.chapter_title, chapter_number: q.chapter_number, topic_title: q.topic_title, topic_number: q.topic_number, topic_id: q.topic_id, total: 0, done: 0 };
+        groups[key].total++;
+        if (q.is_pregen_done) groups[key].done++;
+      });
+
+      if (!Object.keys(groups).length) {
+        tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:16px;color:var(--muted);">No questions found for this subject</td></tr>';
+        return;
+      }
+
+      tbody.innerHTML = Object.values(groups).map(g => {
+        const pending = g.total - g.done;
+        const pct = Math.round((g.done / g.total) * 100);
+        return `<tr>
+          <td>${g.chapter_number ? `Ch.${g.chapter_number}: ${g.chapter_title || ''}` : '—'}</td>
+          <td>${g.topic_number ? `${g.topic_number} ${g.topic_title || ''}` : '—'}</td>
+          <td style="font-weight:700;">${g.total}</td>
+          <td style="color:var(--accent2);">${g.done} (${pct}%)</td>
+          <td style="color:${pending > 0 ? 'var(--warn)' : 'var(--accent2)'}">${pending}</td>
+          <td>${g.topic_id ? `<button class="btn btn-ghost" style="padding:4px 10px;font-size:11px;"
+            onclick="topicPregen('${subjectId}','${g.topic_id}')">▶ Pre-gen Topic</button>` : '—'}</td>
+        </tr>`;
+      }).join('');
+    } catch(e) {
+      tbody.innerHTML = `<tr><td colspan="6" style="color:var(--danger);padding:12px;">${e.message}</td></tr>`;
+    }
+  }
+
+  async function topicPregen(subjectId, topicId) {
+    log(`Starting topic-scoped pre-gen: subject=${subjectId} topic=${topicId}`, 'info');
+    try {
+      const r = await fetch(`${API()}/pregen/start`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ subjectId, topicId, limit: 200 }),
+      });
+      const d = await r.json();
+      if (d.error) throw new Error(d.error);
+      log(`Topic pre-gen started: ${d.message}`, 'ok');
+      document.getElementById('subjectSelect').value = subjectId;
+      document.getElementById('btnStart').disabled = true;
+      document.getElementById('btnStop').disabled  = false;
+      pollTimer = setTimeout(pollStatus, 1500);
+    } catch(e) {
+      log(`Topic pre-gen error: ${e.message}`, 'fail');
     }
   }
 

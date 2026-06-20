@@ -32,6 +32,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.slide_generator import generate_slides
 from core.b2_client import upload_to_b2
+from core.embeddings import embed_async, vec_to_pg_str
 
 # ── Environment ────────────────────────────────────────────────────────────────
 VOXCPM_URL     = os.getenv("VOXCPM_URL",    "http://host.docker.internal:7861")
@@ -161,11 +162,12 @@ async def _wan2gp_image(prompt: str) -> Optional[bytes]:
 
         # 1. Submit Job
         payload = {
-            "prompt": prompt,
-            "model": "flux_dev",
-            "resolution": "1024x1024",
-            "steps": 20,
-            "seed": -1
+            "prompt":       prompt,
+            "model":        "flux_dev",
+            "resolution":   "1024x1024",
+            "steps":        50,          # Flux Dev default max — sharpest output, fine for background pre-gen
+            "guidance_scale": 7.5,       # stronger prompt adherence (default ~3.5 is too loose)
+            "seed":         -1
         }
         async with httpx.AsyncClient(timeout=10) as client:
             resp = await client.post(
@@ -228,11 +230,48 @@ async def _process_slide(idx: int, slide: dict, cache_id: str, language: str):
     Returns (enriched_slide_dict, audio_duration_float).
     Called in parallel for all slides via asyncio.gather().
     """
+    slide_title    = slide.get("title", "Concept")
+    slide_content  = slide.get("infographic") or slide.get("content") or ""
+    key_points     = slide.get("keyPoints") or []
+    is_story       = slide.get("isStory", False)
+    is_tips        = slide.get("isTips", False)
+
+    # ── Build a rich, detailed image prompt ──────────────────────────────────
+    # Flux/SDXL models need long, structured prompts for quality results.
+    # A 3-sentence prompt → generic blurry output.
+    # A detailed, layered prompt → sharp, educational, on-topic image.
+
+    kp_str = ", ".join(key_points[:3]) if key_points else ""
+
+    if is_story:
+        style_hint = (
+            "warm illustrated story scene, narrative art, soft warm colors, "
+            "storybook illustration style, characters interacting with concept"
+        )
+    elif is_tips:
+        style_hint = (
+            "memory tips infographic, lightbulb icons, numbered list visual, "
+            "bright yellow and blue palette, clean icon-based layout"
+        )
+    else:
+        style_hint = (
+            "educational diagram, textbook illustration, labeled arrows, "
+            "clear section boxes, blue and white color scheme"
+        )
+
     img_prompt = (
-        f"Educational infographic: {slide.get('title', 'Concept')}\n"
-        f"{slide.get('infographic', slide.get('content', ''))[:200]}\n"
-        "Style: clean, colorful, labeled, white background, no clutter"
+        f"Educational infographic poster: \"{slide_title}\". "
+        f"Topic: {slide_content[:120]}. "
+        f"{'Key concepts shown: ' + kp_str + '. ' if kp_str else ''}"
+        f"Style: {style_hint}. "
+        f"Visual design: clean layout, high contrast text labels, white background, "
+        f"professional academic look, crisp lines, no clutter, no watermarks. "
+        f"Composition: title at top, main visual in center, key labels on sides. "
+        f"Quality: sharp, detailed, 4K resolution, photorealistic where appropriate, "
+        f"suitable for classroom projection. "
+        f"Negative: blurry, low quality, pixelated, messy, overlapping text, dark background."
     )
+
     narration = slide.get("narration") or slide.get("content") or ""
 
     # Run image AND audio for this slide at the same time
@@ -300,7 +339,7 @@ async def _pregen_one(row: Dict[str, Any], db: AsyncSession) -> None:
                     text("""
                         SELECT chunk_text FROM document_chunks
                         WHERE document_id = CAST(:doc_id AS uuid)
-                        ORDER BY chunk_index LIMIT 3
+                        ORDER BY chunk_index LIMIT 8  -- 8 chunks ≈ full chapter context for deep narrations
                     """),
                     {"doc_id": str(doc_id)},
                 )
@@ -365,12 +404,18 @@ async def _pregen_one(row: Dict[str, Any], db: AsyncSession) -> None:
     # ── Step 3: Save all results → mark done ─────────────────────────────────
     _state.current_step = "saving"
     _log(f"[Pregen] Step 3: Saving results to DB...")
+
+    # Calculate embedding for the L4 Semantic Cache
+    q_vec = await embed_async(question)
+    vec_str = vec_to_pg_str(q_vec)
+
     await db.execute(
         text("""
             UPDATE teaching_qa_cache
             SET presentation_slides    = CAST(:slides AS jsonb),
                 slide_audio_urls       = CAST(:audio AS jsonb),
                 total_duration_seconds = :dur,
+                question_embedding     = CAST(:vec AS vector),
                 pregen_status          = 'done',
                 pregen_completed_at    = NOW()
             WHERE id = CAST(:id AS uuid)
@@ -379,6 +424,7 @@ async def _pregen_one(row: Dict[str, Any], db: AsyncSession) -> None:
             "slides": json.dumps(slides),
             "audio":  json.dumps(audio_urls),
             "dur":    total_duration,
+            "vec":    vec_str,
             "id":     cache_id,
         },
     )
@@ -386,49 +432,127 @@ async def _pregen_one(row: Dict[str, Any], db: AsyncSession) -> None:
     _log(f"[Pregen] ✓ Done: {question[:60]} — {len(slides)} slides, {round(total_duration)}s audio")
 
 
+# _pregen_one_question() removed — questions are synced into teaching_qa_cache
+# at the start of run_pregen_batch() and processed through the single unified loop.
+
+
 # ── Batch runner ──────────────────────────────────────────────────────────────
 async def run_pregen_batch(
     subject_id:  str,
     db_factory,
     limit:       int = 500,
+    topic_id:    str = None,
+    chapter_id:  str = None,
 ) -> None:
     """
-    Background batch job. Processes pending rows one at a time.
-    Each row goes through: Ollama → [Image → Audio per slide] → Save.
+    Background batch job — single unified queue.
+
+    On every start:
+      1. Reset any stuck 'processing' rows → 'pending'  (handles container restarts)
+      2. Sync unfinished rows from questions table → teaching_qa_cache
+         using ON CONFLICT DO NOTHING  (never overwrites 'done' rows)
+      3. Process all 'pending' rows in one simple loop
     """
     global _state
     _state = PregenState(
-        running      = True,
+        running        = True,
         stop_requested = False,
-        subject_id   = subject_id,
-        started_at   = time.time(),
+        subject_id     = subject_id,
+        started_at     = time.time(),
     )
-    _log(f"[Pregen] ══════════════ Batch started: subject={subject_id} limit={limit} ══════════════")
+    _log(f"[Pregen] ══ Batch started: subject={subject_id} topic={topic_id} chapter={chapter_id} limit={limit} ══")
 
     try:
-        # Count total pending rows
+        from core.cache import hash_question
+
         async with db_factory() as db:
-            row = (await db.execute(
+            # ── Step 1: Resolve subject name for Ollama prompts ───────────────
+            sub_row = (await db.execute(
+                text("SELECT name FROM subjects WHERE subject_id=:sid"),
+                {"sid": subject_id},
+            )).fetchone()
+            subject_name = sub_row[0] if sub_row else subject_id
+
+            # ── Step 2: Reset stuck 'processing' rows → 'pending' ─────────────
+            # These got stuck because the container restarted mid-generation.
+            stuck = await db.execute(
                 text("""
-                    SELECT COUNT(*) FROM (
-                        SELECT 1 FROM teaching_qa_cache
-                        WHERE subject_id = :subj
-                          AND (pregen_status IS NULL OR pregen_status = 'pending')
-                        LIMIT :lim
-                    ) sub
+                    UPDATE teaching_qa_cache
+                    SET pregen_status = 'pending'
+                    WHERE subject_id = :subj
+                      AND pregen_status = 'processing'
                 """),
-                {"subj": subject_id, "lim": limit},
+                {"subj": subject_id},
+            )
+            await db.commit()
+            if stuck.rowcount:
+                _log(f"[Pregen] Reset {stuck.rowcount} stuck 'processing' rows → 'pending'")
+
+            # ── Step 3: Sync questions table → teaching_qa_cache ──────────────
+            # ON CONFLICT DO NOTHING: never touch rows that are already 'done'.
+            q_filters = ["is_pregen_done = FALSE", "subject_id = :sid"]
+            q_params: Dict[str, Any] = {"sid": subject_id}
+            if topic_id:
+                q_filters.append("topic_id = CAST(:tid AS uuid)")
+                q_params["tid"] = topic_id
+            if chapter_id:
+                q_filters.append("chapter_id = CAST(:cid AS uuid)")
+                q_params["cid"] = chapter_id
+
+            pending_questions = (await db.execute(
+                text(f"""
+                    SELECT id, question_text, subject_id, chapter_id, topic_id
+                    FROM questions
+                    WHERE {" AND ".join(q_filters)}
+                    ORDER BY created_at ASC
+                    LIMIT :lim
+                """),
+                {**q_params, "lim": limit},
+            )).fetchall()
+
+            synced = 0
+            for q in pending_questions:
+                q_hash = hash_question(q.question_text)
+                ch_id  = str(q.chapter_id) if q.chapter_id else None
+                t_id   = str(q.topic_id)   if q.topic_id   else None
+                res = await db.execute(
+                    text("""
+                        INSERT INTO teaching_qa_cache
+                            (id, subject_id, chapter_id, topic_id,
+                             question_hash, question_text, variation_number, pregen_status)
+                        VALUES
+                            (gen_random_uuid(), :sid, :cid, :tid,
+                             :qhash, :qtext, 1, 'pending')
+                        ON CONFLICT (question_hash, subject_id, variation_number)
+                        DO NOTHING
+                    """),
+                    {"sid": q.subject_id, "cid": ch_id, "tid": t_id,
+                     "qhash": q_hash, "qtext": q.question_text},
+                )
+                if res.rowcount:
+                    synced += 1
+            await db.commit()
+            _log(f"[Pregen] Synced {synced} new questions into cache queue")
+
+            # ── Count total pending for progress tracking ──────────────────────
+            cache_filter = "subject_id = :subj AND pregen_status = 'pending'"
+            cache_params: Dict[str, Any] = {"subj": subject_id}
+            if topic_id:
+                cache_filter += " AND topic_id = CAST(:tid AS uuid)"
+                cache_params["tid"] = topic_id
+
+            total_pending = (await db.execute(
+                text(f"SELECT COUNT(*) FROM teaching_qa_cache WHERE {cache_filter}"),
+                cache_params,
             )).scalar()
-            _state.total = int(row or 0)
+            _state.total = int(total_pending or 0)
 
-        _log(f"[Pregen] {_state.total} rows to process")
+        _log(f"[Pregen] {_state.total} rows pending — starting processing loop")
 
-        batch_size = 5
-        offset     = 0
-        processed  = 0
-
+        # ── Step 4: Single processing loop ────────────────────────────────────
+        processed = 0
         while not _state.stop_requested and processed < limit:
-            # Fetch next batch of pending rows
+            # Always fetch the next pending row fresh (no offset — status changes as we go)
             async with db_factory() as db:
                 rows = (await db.execute(
                     text("""
@@ -436,63 +560,75 @@ async def run_pregen_batch(
                                slide_audio_urls, language, subject_id, document_id
                         FROM teaching_qa_cache
                         WHERE subject_id = :subj
-                          AND (pregen_status IS NULL OR pregen_status = 'pending')
+                          AND pregen_status = 'pending'
                         ORDER BY usage_count DESC NULLS LAST, created_at ASC
-                        LIMIT :batch OFFSET :offset
+                        LIMIT 1
                     """),
-                    {"subj": subject_id, "batch": batch_size, "offset": offset},
+                    {"subj": subject_id},
                 )).fetchall()
 
             if not rows:
                 _log("[Pregen] No more pending rows — batch complete.")
                 break
 
-            for row in rows:
-                if _state.stop_requested:
-                    break
-                if processed >= limit:
-                    break
+            row = rows[0]
+            row_dict = dict(row._mapping)
+            _state.current_question = (row_dict.get("question_text") or "")[:80]
+            row_dict["subject_id"] = subject_name  # use name for Ollama prompt
 
-                row_dict = dict(row._mapping)
-                _state.current_question = (row_dict.get("question_text") or "")[:80]
+            # Mark as 'processing' atomically before starting work
+            async with db_factory() as db:
+                await db.execute(
+                    text("""
+                        UPDATE teaching_qa_cache
+                        SET pregen_status = 'processing'
+                        WHERE id = CAST(:id AS uuid)
+                          AND pregen_status = 'pending'
+                    """),
+                    {"id": str(row_dict["id"])},
+                )
+                await db.commit()
 
-                # Mark as 'processing' in DB
+            try:
+                async with db_factory() as db:
+                    await _pregen_one(row_dict, db)
+
+                # Link back to questions table if this question originated there
+                async with db_factory() as db:
+                    await db.execute(
+                        text("""
+                            UPDATE questions
+                            SET is_pregen_done = TRUE,
+                                cache_id = CAST(:cid AS uuid)
+                            WHERE question_text = :qtext
+                              AND subject_id = :sid
+                              AND is_pregen_done = FALSE
+                        """),
+                        {"cid": str(row_dict["id"]),
+                         "qtext": row_dict.get("question_text", ""),
+                         "sid": subject_id},
+                    )
+                    await db.commit()
+
+                _state.done += 1
+
+            except Exception as e:
+                err = str(e)
+                _state.failed += 1
+                _state.last_error = err
+                _log(f"[Pregen] ✗ Failed: id={row_dict['id']}: {err}")
                 async with db_factory() as db:
                     await db.execute(
                         text("""
                             UPDATE teaching_qa_cache
-                            SET pregen_status = 'processing'
+                            SET pregen_status = 'failed'
                             WHERE id = CAST(:id AS uuid)
                         """),
                         {"id": str(row_dict["id"])},
                     )
                     await db.commit()
 
-                try:
-                    async with db_factory() as db:
-                        await _pregen_one(row_dict, db)
-                    _state.done += 1
-
-                except Exception as e:
-                    err = str(e)
-                    _state.failed += 1
-                    _state.last_error = err
-                    _log(f"[Pregen] ✗ Failed: id={row_dict['id']}: {err}")
-                    # Mark as failed in DB
-                    async with db_factory() as db:
-                        await db.execute(
-                            text("""
-                                UPDATE teaching_qa_cache
-                                SET pregen_status = 'failed'
-                                WHERE id = CAST(:id AS uuid)
-                            """),
-                            {"id": str(row_dict["id"])},
-                        )
-                        await db.commit()
-
-                processed += 1
-
-            offset += batch_size
+            processed += 1
 
     except Exception as e:
         _log(f"[Pregen] Fatal batch error: {e}")

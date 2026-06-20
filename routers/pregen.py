@@ -55,29 +55,52 @@ async def start_pregen(
             },
         )
 
-    limit = int(body.get("limit", 500))
+    limit      = int(body.get("limit", 500))
+    topic_id   = body.get("topicId", "").strip() or None
+    chapter_id = body.get("chapterId", "").strip() or None
 
-    # Count pending rows first
-    count_row = (await db.execute(
+    # Count all actionable rows from the single source of truth.
+    # 'processing' rows will be reset to 'pending' at batch start (handles restarts).
+    pending = (await db.execute(
         text("""
             SELECT COUNT(*) FROM teaching_qa_cache
             WHERE subject_id = :subj
-              AND (pregen_status IS NULL OR pregen_status = 'pending')
+              AND pregen_status IN ('pending', 'processing')
         """),
         {"subj": subject_id},
     )).scalar()
-    pending = int(count_row or 0)
 
-    if pending == 0:
+    # Also count questions not yet synced into the cache
+    unsynced = (await db.execute(
+        text("""
+            SELECT COUNT(*) FROM questions q
+            WHERE q.subject_id = :subj
+              AND q.is_pregen_done = FALSE
+              AND NOT EXISTS (
+                SELECT 1 FROM teaching_qa_cache c
+                WHERE c.subject_id = q.subject_id
+                  AND c.question_text = q.question_text
+              )
+        """),
+        {"subj": subject_id},
+    )).scalar()
+
+    total_pending = int(pending or 0) + int(unsynced or 0)
+
+    if total_pending == 0:
         return {"message": "Nothing to pre-generate", "pending": 0, "subject_id": subject_id}
 
     # Kick off in background
-    background_tasks.add_task(run_pregen_batch, subject_id, AsyncSessionLocal, limit)
+    background_tasks.add_task(
+        run_pregen_batch, subject_id, AsyncSessionLocal, limit, topic_id, chapter_id
+    )
 
     return {
         "message": f"Pre-generation started for {subject_id!r}",
         "subject_id": subject_id,
-        "pending_rows": pending,
+        "topic_id":   topic_id,
+        "chapter_id": chapter_id,
+        "pending_rows": total_pending,
         "limit": limit,
         "tip": "Poll GET /pregen/status for live progress",
     }
@@ -112,14 +135,14 @@ async def pending_count(subject_id: str = "", db: AsyncSession = Depends(get_db)
         sql = text("""
             SELECT COUNT(*) FROM teaching_qa_cache
             WHERE subject_id = :subj
-              AND (pregen_status IS NULL OR pregen_status = 'pending')
+              AND pregen_status IN ('pending', 'processing')
         """)
         total = (await db.execute(sql, {"subj": subject_id})).scalar()
     else:
         sql = text("""
             SELECT subject_id, COUNT(*) AS cnt
             FROM teaching_qa_cache
-            WHERE (pregen_status IS NULL OR pregen_status = 'pending')
+            WHERE pregen_status IN ('pending', 'processing')
             GROUP BY subject_id ORDER BY cnt DESC
         """)
         rows = (await db.execute(sql)).fetchall()

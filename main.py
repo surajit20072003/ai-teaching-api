@@ -22,6 +22,7 @@ from core.local_storage import ensure_base_dirs, read_slide_cache, write_slide_c
 from core.llm_judge import judge_and_pick
 from routers.documents import router as documents_router
 from routers.pregen import router as pregen_router
+from routers.questions import router as questions_router
 
 
 # ─────────────────────────────────────────────────────────
@@ -70,6 +71,7 @@ app.add_middleware(
 
 app.include_router(documents_router)
 app.include_router(pregen_router)
+app.include_router(questions_router)
 
 @app.on_event("startup")
 async def startup_event():
@@ -224,25 +226,46 @@ async def list_subjects(db: AsyncSession = Depends(get_db)):
 # POST /subjects — create and persist a new named subject
 @app.post("/subjects")
 async def create_subject(body: dict, db: AsyncSession = Depends(get_db)):
-    """Create a new subject — saves to subjects table so it appears in dropdown immediately."""
+    """Create a new subject — deduplicates by name (case-insensitive).
+    If a subject with the same name already exists, returns it instead of creating a duplicate.
+    """
     import uuid as _uuid
     name = (body.get("name") or "").strip()
     if not name:
         raise HTTPException(status_code=400, detail="name is required")
+
+    # ── Look up by name first (case-insensitive) ─────────────────────────────
+    existing = (await db.execute(
+        text("SELECT subject_id, name, description FROM subjects WHERE LOWER(name) = LOWER(:n)"),
+        {"n": name},
+    )).fetchone()
+
+    if existing:
+        return {
+            "subject_id":    existing.subject_id,
+            "name":          existing.name,
+            "description":   existing.description or "",
+            "already_existed": True,
+        }
+
+    # ── Not found — create new ───────────────────────────────────────────────
     subject_id = str(_uuid.uuid4())
+    slug = name.lower().replace(" ", "-")
     await db.execute(
         text("""
-            INSERT INTO subjects (subject_id, name, description)
-            VALUES (:sid, :name, :desc)
+            INSERT INTO subjects (subject_id, name, slug, description)
+            VALUES (:sid, :name, :slug, :desc)
             ON CONFLICT (subject_id) DO NOTHING
         """),
-        {"sid": subject_id, "name": name, "desc": body.get("description", "")},
+        {"sid": subject_id, "name": name, "slug": slug, "desc": body.get("description", "")},
     )
     await db.commit()
     return {
-        "subject_id": subject_id,
-        "name": name,
-        "description": body.get("description", ""),
+        "subject_id":    subject_id,
+        "name":          name,
+        "slug":          slug,
+        "description":   body.get("description", ""),
+        "already_existed": False,
     }
 
 

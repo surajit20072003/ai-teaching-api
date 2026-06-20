@@ -23,7 +23,7 @@ def get_model():
         # device='cpu' prevents the 'meta tensor' crash that occurs in
         # multi-worker Uvicorn when device_map='auto' puts tensors on a
         # meta device that cannot be used for inference.
-        _model = SentenceTransformer(EMBED_MODEL_NAME, device='cpu')
+        _model = SentenceTransformer(EMBED_MODEL_NAME, device='cpu', model_kwargs={"low_cpu_mem_usage": False})
         print("[Embeddings] ✓ Model loaded and cached in memory.")
     return _model
 
@@ -45,7 +45,7 @@ def embed_text(text: str) -> list[float]:
         _model = None  # force reload on next call
         try:
             from sentence_transformers import SentenceTransformer
-            _model = SentenceTransformer(EMBED_MODEL_NAME, device='cpu')
+            _model = SentenceTransformer(EMBED_MODEL_NAME, device='cpu', model_kwargs={"low_cpu_mem_usage": False})
             vec = _model.encode(text, normalize_embeddings=True)
             print("[Embeddings] ✓ Model reloaded successfully after failure.")
             return vec.tolist()

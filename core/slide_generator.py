@@ -36,10 +36,14 @@ SLIDE_PROMPT = (
     "You are Professor AI, an expert Indian teacher specializing in {subject}.\n"
     "Generate a 6-7 slide mini-lecture for this student question: \"{question}\"\n\n"
     "RULES:\n"
-    "- Narration should be 150-250 words (will be converted to audio)\n"
-    "- Last slide MUST have isStory: true (story or analogy)\n"
-    "- Second-to-last slide MUST have isTips: true (memory tips)\n"
-    "- formula field: LaTeX string or empty string \"\"\n"
+    "1. Each slide covers a DISTINCT sub-topic — no repetition across slides.\n"
+    "2. Narration: 200-250 words. Conversational teacher voice. Include a concrete example in EVERY slide.\n"
+    "3. 'content' field: clear 2-3 sentence explanation of that slide's sub-topic.\n"
+    "4. 'infographic' field: describe a SPECIFIC visual (e.g. 'Factor tree of 72 = 2x2x2x3x3', NOT 'diagram of concept').\n"
+    "5. 'keyPoints': exactly 3 crisp bullet points for the slide.\n"
+    "6. 'formula': LaTeX string if slide has math, else empty string \"\".\n"
+    "7. Last slide MUST have isStory: true — a real-world analogy or story that makes the concept unforgettable.\n"
+    "8. Second-to-last slide MUST have isTips: true — mnemonic tricks and memory aids.\n"
 ) + _BASE_FORMAT
 
 RAG_PROMPT = (
@@ -49,14 +53,21 @@ RAG_PROMPT = (
     "--- BEGIN DOCUMENT CONTEXT ---\n"
     "{context}\n"
     "--- END DOCUMENT CONTEXT ---\n\n"
-    "Generate a 6-7 slide mini-lecture BASED ON the document content above.\n"
-    "Use the document's specific explanations, examples, and terminology.\n\n"
-    "RULES:\n"
-    "- Narration should be 150-250 words (will be converted to audio)\n"
-    "- Last slide MUST have isStory: true\n"
-    "- Second-to-last slide MUST have isTips: true\n"
-    "- formula field: LaTeX string or empty string \"\"\n"
-    "- Add \"is_doc_grounded\": true to the JSON root\n"
+    "Generate a 6-7 slide mini-lecture STRICTLY based ONLY on the document content above.\n\n"
+    "CRITICAL RULES — MUST FOLLOW ALL:\n"
+    "1. ONLY use facts, examples, definitions, and numbers from the document. DO NOT invent anything.\n"
+    "2. Quote the document's specific examples verbatim where possible (e.g. if doc says '4^n = 2^2n', use it).\n"
+    "3. If the document has numbered theorems or definitions, reference them by number (e.g. 'Theorem 1.2 states...').\n"
+    "4. Narration: 200-250 words. Sound like a teacher reading the textbook aloud and explaining each line step by step.\n"
+    "5. 'content' field: 2-3 sentence direct summary pulled from document text.\n"
+    "6. 'infographic' field: describe a SPECIFIC diagram tied to the document's example\n"
+    "   (e.g. 'Factor tree: 12 = 2 x 2 x 3, shown as branching tree diagram' NOT 'diagram of concept').\n"
+    "7. 'keyPoints': exactly 3 bullet points — each must be a fact or formula FROM the document.\n"
+    "8. 'formula': exact LaTeX of any formula in the document for this slide, else empty string \"\".\n"
+    "9. Each slide must cover a DISTINCT section of the document — spread content across all slides.\n"
+    "10. Last slide MUST have isStory: true — a real-world analogy tied directly to the document topic.\n"
+    "11. Second-to-last slide MUST have isTips: true — memory tricks for the document's key theorems/formulas.\n"
+    "12. Add \"is_doc_grounded\": true to the JSON root.\n"
 ) + _BASE_FORMAT.replace(
     '"presentation_slides"',
     '"is_doc_grounded": true,\n  "presentation_slides"'
@@ -119,8 +130,9 @@ async def _generate_via_ollama(prompt: str) -> str:
     payload = {
         "model":   OLLAMA_MODEL,
         "stream":  False,
+        "format":  "json",                                   # Forces Ollama to output valid JSON always
         "messages": [{"role": "user", "content": prompt}],
-        "options": {"temperature": 0.7, "num_predict": 4096},
+        "options": {"temperature": 0.7, "num_predict": 6000},  # 6000 tokens → richer 150-250 word narrations
     }
     logger.info(f"[SlideGen/Ollama] POST {url} model={OLLAMA_MODEL} timeout={OLLAMA_TIMEOUT}s")
     async with httpx.AsyncClient(timeout=OLLAMA_TIMEOUT) as client:
