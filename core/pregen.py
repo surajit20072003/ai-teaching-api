@@ -34,6 +34,7 @@ from core.slide_generator import generate_slides
 from core.b2_client import upload_to_b2
 from core.embeddings import embed_async, vec_to_pg_str
 from core.tts_utils import prepare_for_tts
+from core.local_storage import write_image, write_audio, write_slide_cache
 
 # ── Environment ────────────────────────────────────────────────────────────────
 VOXCPM_URL     = os.getenv("VOXCPM_URL",    "http://host.docker.internal:7861")
@@ -225,7 +226,7 @@ def _wav_duration(wav_bytes: bytes) -> float:
 
 
 # ── Core: process ONE question row ────────────────────────────────────────────
-async def _process_slide(idx: int, slide: dict, cache_id: str, language: str):
+async def _process_slide(idx: int, slide: dict, cache_id: str, language: str, subject_id: str = ""):
     """
     Generate image + audio for ONE slide concurrently, upload both to B2.
     Returns (enriched_slide_dict, audio_duration_float).
@@ -288,9 +289,17 @@ async def _process_slide(idx: int, slide: dict, cache_id: str, language: str):
     # ── Image ────────────────────────────────────────────────────────────────
     if isinstance(img_result, bytes) and img_result:
         try:
+            # 1. Local disk — primary fast storage
+            if subject_id:
+                try:
+                    local_path = await write_image(subject_id, cache_id, idx, img_result)
+                    _log(f"[Pregen] slide {idx+1}: image ✓ local → {local_path}")
+                except Exception as e:
+                    _log(f"[Pregen] slide {idx+1}: image local write failed (non-fatal) — {e}")
+            # 2. B2 — cloud backup / CDN
             b2_path = f"ai-teaching/{cache_id}/slide_{idx}.png"
             slide["infographicUrl"] = await upload_to_b2(img_result, b2_path, "image/png")
-            _log(f"[Pregen] slide {idx+1}: image ✓ → {slide['infographicUrl']}")
+            _log(f"[Pregen] slide {idx+1}: image ✓ B2 → {slide['infographicUrl']}")
         except Exception as e:
             _log(f"[Pregen] slide {idx+1}: image B2 upload failed — {e}")
     else:
@@ -302,10 +311,18 @@ async def _process_slide(idx: int, slide: dict, cache_id: str, language: str):
     if isinstance(wav_result, bytes) and wav_result:
         try:
             duration = _wav_duration(wav_result)
+            # 1. Local disk — primary fast storage
+            if subject_id:
+                try:
+                    local_path = await write_audio(subject_id, cache_id, language, idx, wav_result)
+                    _log(f"[Pregen] slide {idx+1}: audio ✓ local → {local_path}")
+                except Exception as e:
+                    _log(f"[Pregen] slide {idx+1}: audio local write failed (non-fatal) — {e}")
+            # 2. B2 — cloud backup / CDN
             b2_path  = f"ai-teaching/{cache_id}/audio_{idx}.wav"
             slide["audioUrl"] = await upload_to_b2(wav_result, b2_path, "audio/wav")
             slide["duration"] = duration
-            _log(f"[Pregen] slide {idx+1}: audio ✓ {round(duration, 1)}s → {slide['audioUrl']}")
+            _log(f"[Pregen] slide {idx+1}: audio ✓ {round(duration, 1)}s B2 → {slide['audioUrl']}")
         except Exception as e:
             _log(f"[Pregen] slide {idx+1}: audio B2 upload failed — {e}")
     else:
@@ -323,7 +340,7 @@ async def _pregen_one(row: Dict[str, Any], db: AsyncSession) -> None:
       3. Save results to DB
     """
     cache_id   = str(row["id"])
-    language   = row.get("language") or "hi-IN"
+    language   = row.get("language") or "en-IN"
     question   = row.get("question_text") or ""
     doc_id     = row.get("document_id")
     subject    = row.get("subject_id") or "General"
@@ -383,11 +400,11 @@ async def _pregen_one(row: Dict[str, Any], db: AsyncSession) -> None:
     _log(f"[Pregen] Step 2: Launching image+audio for all {len(slides)} slides in parallel...")
 
     slide_results = await asyncio.gather(
-        *[_process_slide(idx, slide, cache_id, language) for idx, slide in enumerate(slides)],
+        *[_process_slide(idx, slide, cache_id, language, subject) for idx, slide in enumerate(slides)],
         return_exceptions=True,
     )
 
-    audio_urls: Dict[str, Any] = {}
+    audio_url_list: list = []
     total_duration = 0.0
 
     for idx, result in enumerate(slide_results):
@@ -398,10 +415,11 @@ async def _pregen_one(row: Dict[str, Any], db: AsyncSession) -> None:
         slides[idx] = enriched_slide
         total_duration += duration
         if enriched_slide.get("audioUrl"):
-            audio_urls[str(idx)] = {
-                "audioUrl": enriched_slide["audioUrl"],
-                "duration": duration,
-            }
+            audio_url_list.append({
+                "slideIndex": idx,
+                "audioUrl":   enriched_slide["audioUrl"],
+                "duration":   duration,
+            })
 
     _log(f"[Pregen] Step 2: all slides done — total audio {round(total_duration, 1)}s")
 
@@ -426,7 +444,7 @@ async def _pregen_one(row: Dict[str, Any], db: AsyncSession) -> None:
         """),
         {
             "slides": json.dumps(slides),
-            "audio":  json.dumps(audio_urls),
+            "audio":  json.dumps({"language": language, "urls": audio_url_list}),
             "dur":    total_duration,
             "vec":    vec_str,
             "id":     cache_id,
@@ -434,6 +452,21 @@ async def _pregen_one(row: Dict[str, Any], db: AsyncSession) -> None:
     )
     await db.commit()
     _log(f"[Pregen] ✓ Done: {question[:60]} — {len(slides)} slides, {round(total_duration)}s audio")
+
+    # ── Save presentation JSON to local /sdb-disk (same as real-time does) ────────
+    q_hash = row.get("question_hash") or ""
+    if q_hash and subject:
+        slide_cache_data = {
+            "cache_id":            cache_id,
+            "presentationSlides":  slides,
+            "slideAudioUrls":      {"language": language, "urls": audio_url_list},
+            "totalDurationSeconds": total_duration,
+        }
+        try:
+            await write_slide_cache(subject, q_hash, slide_cache_data)
+            _log(f"[Pregen] ✓ Local slide cache written: {subject}/{q_hash}")
+        except Exception as e:
+            _log(f"[Pregen] Local slide cache write failed (non-fatal): {e}")
 
 
 # _pregen_one_question() removed — questions are synced into teaching_qa_cache

@@ -18,7 +18,7 @@ from core.tts_client import synthesize
 from core.b2_client import upload_to_b2
 from core.embeddings import embed_async, vec_to_pg_str
 from core.semantic_check import llm_same_topic
-from core.local_storage import ensure_base_dirs, read_slide_cache, write_slide_cache
+from core.local_storage import ensure_base_dirs, read_slide_cache, write_slide_cache, write_audio
 from core.llm_judge import judge_and_pick
 from routers.documents import router as documents_router
 from routers.pregen import router as pregen_router
@@ -28,8 +28,15 @@ from routers.questions import router as questions_router
 # ─────────────────────────────────────────────────────────
 # Audio helper (used by /ai-teaching-assistant)
 # ─────────────────────────────────────────────────────────
-async def generate_all_audios(slides: list, cache_id: str, language: str) -> list[dict]:
-    """Generate audio for all slides in parallel and upload to B2."""
+async def generate_all_audios(
+    slides: list, cache_id: str, language: str, subject_id: str = ""
+) -> list[dict]:
+    """
+    Generate audio for all slides in parallel.
+    Dual-writes: local /sdb-disk (primary) + B2 (cloud backup).
+    """
+    import io, wave
+
     async def _gen_and_up(idx: int, narration: str):
         if not narration:
             return None
@@ -37,24 +44,37 @@ async def generate_all_audios(slides: list, cache_id: str, language: str) -> lis
             print(f"[Audio] Slide {idx} → generating audio")
             audio_b64 = await synthesize(narration, language)
             wav_data  = base64.b64decode(audio_b64)
-            path      = f"ai-presentations/{cache_id}/{language}/slide_{idx}.wav"
-            url       = await upload_to_b2(wav_data, path, "audio/wav")
-            print(f"[Audio] Slide {idx} → uploaded to {url}")
+
+            # Duration
             try:
-                import io, wave
                 with wave.open(io.BytesIO(wav_data), "rb") as wf:
                     duration = wf.getnframes() / float(wf.getframerate() or 1)
             except Exception as e:
                 print(f"[Audio] Warning: WAV parse failed: {e}")
                 duration = 10.0
+
+            # ── Dual write ────────────────────────────────────────────────────
+            # 1. Local disk — primary fast storage
+            if subject_id:
+                try:
+                    local_path = await write_audio(subject_id, cache_id, language, idx, wav_data)
+                    print(f"[Audio] Slide {idx} → local disk: {local_path}")
+                except Exception as e:
+                    print(f"[Audio] Slide {idx} → local disk failed (non-fatal): {e}")
+
+            # 2. B2 — cloud backup / CDN
+            b2_path = f"ai-teaching/{cache_id}/audio_{idx}.wav"
+            url     = await upload_to_b2(wav_data, b2_path, "audio/wav")
+            print(f"[Audio] Slide {idx} → B2: {url}")
+
             return {"slideIndex": idx, "audioUrl": url, "duration": round(duration, 2)}
         except Exception as e:
             print(f"[Audio] Slide {idx} failed: {e}")
             return None
 
     tasks   = [_gen_and_up(i, s.get("narration", "")) for i, s in enumerate(slides)]
-    results = await asyncio.gather(*tasks)
-    return [r for r in results if r]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    return [r for r in results if isinstance(r, dict)]
 
 
 # ─────────────────────────────────────────────────────────
@@ -556,8 +576,8 @@ async def teaching_assistant(body: dict, db: AsyncSession = Depends(get_db)):
     slides      = slides_data.get("presentation_slides", [])
     cache_id    = str(uuid.uuid4())
 
-    images_task = generate_all_images(slides, cache_id)
-    audios_task = generate_all_audios(slides, cache_id, language)
+    images_task = generate_all_images(slides, cache_id, subject_id)
+    audios_task = generate_all_audios(slides, cache_id, language, subject_id)
     images, audios = await asyncio.gather(images_task, audios_task)
 
     for i, s in enumerate(slides):

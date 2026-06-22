@@ -4,17 +4,26 @@ import base64
 import asyncio
 import httpx
 from .b2_client import upload_to_b2
+from .local_storage import write_image
 
-# Semaphore limits concurrent image requests (set higher since OpenRouter allows more)
+# Semaphore limits concurrent image requests
 IMAGE_SEMAPHORE = asyncio.Semaphore(10)
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY")
 
-async def generate_one_image(slide: dict, cache_id: str, idx: int) -> str:
-    """Generate one infographic image for a slide via OpenRouter/Gemini."""
+
+async def generate_one_image(slide: dict, cache_id: str, idx: int, subject_id: str = "") -> str:
+    """
+    Generate one infographic image for a slide via OpenRouter/Gemini.
+    Dual-writes: local /sdb-disk + B2 cloud.
+    Returns the B2 public URL (empty string on failure).
+    """
     title = slide.get("title", "")
-    info = slide.get("infographic", "educational diagram")
-    
-    prompt = f"Professional educational infographic about {title}: {info}. Clean vector art style, minimalist, no text, colorful, high quality."
+    info  = slide.get("infographic", "educational diagram")
+
+    prompt = (
+        f"Professional educational infographic about {title}: {info}. "
+        "Clean vector art style, minimalist, no text, colorful, high quality."
+    )
 
     url = "https://openrouter.ai/api/v1/chat/completions"
     headers = {
@@ -35,14 +44,14 @@ async def generate_one_image(slide: dict, cache_id: str, idx: int) -> str:
                 resp = await client.post(url, headers=headers, json=payload)
                 resp.raise_for_status()
                 data = resp.json()
-            
+
             choices = data.get("choices", [])
             if not choices:
                 raise Exception(f"No choices returned: {data}")
-            
-            message = choices[0].get("message", {})
+
+            message   = choices[0].get("message", {})
             image_b64 = None
-            
+
             # 1. Check 'images' field
             images = message.get("images") or []
             if images:
@@ -54,7 +63,7 @@ async def generate_one_image(slide: dict, cache_id: str, idx: int) -> str:
                         image_b64 = img.get("url") or img.get("data") or img.get("b64_json") or ""
                 elif isinstance(img, str):
                     image_b64 = img
-            
+
             # 2. Check 'content' for data URIs
             if not image_b64:
                 content = message.get("content")
@@ -69,10 +78,20 @@ async def generate_one_image(slide: dict, cache_id: str, idx: int) -> str:
                 image_b64 = image_b64.split(",", 1)[1]
 
             img_bytes = base64.b64decode(image_b64)
-            
-        path = f"ai-presentations/{cache_id}/slide_{idx}.png"
-        b2_url = await upload_to_b2(img_bytes, path, "image/png")
-        print(f"[Image] Slide {idx} → {b2_url}")
+
+        # ── Dual write: local disk + B2 ──────────────────────────────────────
+        # 1. Local disk — primary fast storage
+        if subject_id:
+            try:
+                local_path = await write_image(subject_id, cache_id, idx, img_bytes)
+                print(f"[Image] Slide {idx} → local disk: {local_path}")
+            except Exception as e:
+                print(f"[Image] Slide {idx} → local disk failed (non-fatal): {e}")
+
+        # 2. B2 — cloud backup / CDN
+        b2_path = f"ai-teaching/{cache_id}/slide_{idx}.png"
+        b2_url  = await upload_to_b2(img_bytes, b2_path, "image/png")
+        print(f"[Image] Slide {idx} → B2: {b2_url}")
         return b2_url
 
     except Exception as e:
@@ -80,7 +99,12 @@ async def generate_one_image(slide: dict, cache_id: str, idx: int) -> str:
         return ""
 
 
-async def generate_all_images(slides: list, cache_id: str) -> list[str]:
-    """Generate ALL slide images in PARALLEL using asyncio.gather."""
-    tasks = [generate_one_image(s, cache_id, i) for i, s in enumerate(slides)]
-    return await asyncio.gather(*tasks)
+async def generate_all_images(slides: list, cache_id: str, subject_id: str = "") -> list[str]:
+    """
+    Generate ALL slide images in PARALLEL using asyncio.gather.
+    Returns a list of URLs (empty string where generation failed).
+    """
+    tasks   = [generate_one_image(s, cache_id, i, subject_id) for i, s in enumerate(slides)]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    # Normalize: exceptions → empty string
+    return [r if isinstance(r, str) and r else "" for r in results]
