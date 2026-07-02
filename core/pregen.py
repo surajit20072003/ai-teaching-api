@@ -35,6 +35,7 @@ from core.b2_client import upload_to_b2
 from core.embeddings import embed_async, vec_to_pg_str
 from core.tts_utils import prepare_for_tts
 from core.local_storage import write_image, write_audio, write_slide_cache
+from core.cache import delete_from_cache
 
 # ── Environment ────────────────────────────────────────────────────────────────
 VOXCPM_URL     = os.getenv("VOXCPM_URL",    "http://host.docker.internal:7861")
@@ -60,6 +61,51 @@ class PregenState:
 
 
 _state = PregenState()
+
+
+# ── Shared in-memory state for media-retry job ───────────────────────────────
+@dataclass
+class RetryState:
+    running:          bool  = False
+    subject_id:       str   = ""
+    total:            int   = 0
+    done:             int   = 0
+    failed:           int   = 0
+    current_cache_id: str   = ""
+    current_step:     str   = ""    # e.g. "image:2" | "audio:3"
+    started_at:       float = 0.0
+    last_error:       str   = ""
+    log:              List[str] = field(default_factory=list)
+
+
+_retry_state = RetryState()
+
+
+# ── Retry helpers ────────────────────────────────────────────────────────────
+def _needs_image(slide: dict) -> bool:
+    url = (slide.get("infographicUrl") or "").strip()
+    return not url.startswith("http")
+
+
+def _needs_audio(slide: dict) -> bool:
+    url = (slide.get("audioUrl") or "").strip()
+    return not url.startswith("http")
+
+
+def get_retry_state() -> Dict[str, Any]:
+    elapsed = round(time.time() - _retry_state.started_at, 1) if _retry_state.started_at else 0
+    return {
+        "running":          _retry_state.running,
+        "subject_id":       _retry_state.subject_id,
+        "total":            _retry_state.total,
+        "done":             _retry_state.done,
+        "failed":           _retry_state.failed,
+        "current_cache_id": _retry_state.current_cache_id,
+        "current_step":     _retry_state.current_step,
+        "elapsed_seconds":  elapsed,
+        "last_error":       _retry_state.last_error,
+        "recent_log":       _retry_state.log[-30:],
+    }
 
 
 def _log(msg: str) -> None:
@@ -279,56 +325,82 @@ async def _process_slide(idx: int, slide: dict, cache_id: str, language: str, su
     # Clean greetings + normalize dashes/math/markdown before VoxCPM TTS
     narration = prepare_for_tts(narration)
 
-    # Run image AND audio for this slide at the same time
-    img_result, wav_result = await asyncio.gather(
-        _wan2gp_image(img_prompt),
-        _voxcpm_tts(narration, language),
-        return_exceptions=True,
-    )
+    # ── Layer 1: Inline retry — run image+audio, retry up to 2× on failure ──
+    # Each attempt: run both concurrently. If one fails, the 15s wait gives the
+    # GPU time to recover before the next attempt. Catches ~90% of GPU timeouts.
+    _INLINE_RETRIES = 2
+    _RETRY_WAIT_S   = 15
 
-    # ── Image ────────────────────────────────────────────────────────────────
-    if isinstance(img_result, bytes) and img_result:
-        try:
-            # 1. Local disk — primary fast storage
-            if subject_id:
-                try:
-                    local_path = await write_image(subject_id, cache_id, idx, img_result)
-                    _log(f"[Pregen] slide {idx+1}: image ✓ local → {local_path}")
-                except Exception as e:
-                    _log(f"[Pregen] slide {idx+1}: image local write failed (non-fatal) — {e}")
-            # 2. B2 — cloud backup / CDN
-            b2_path = f"ai-teaching/{cache_id}/slide_{idx}.png"
-            slide["infographicUrl"] = await upload_to_b2(img_result, b2_path, "image/png")
-            _log(f"[Pregen] slide {idx+1}: image ✓ B2 → {slide['infographicUrl']}")
-        except Exception as e:
-            _log(f"[Pregen] slide {idx+1}: image B2 upload failed — {e}")
-    else:
-        err = img_result if isinstance(img_result, Exception) else "no output"
-        _log(f"[Pregen] slide {idx+1}: image skipped ({err})")
+    for attempt in range(1, _INLINE_RETRIES + 2):   # attempts: 1, 2, 3
+        needs_img = _needs_image(slide)
+        needs_aud = _needs_audio(slide)
 
-    # ── Audio ────────────────────────────────────────────────────────────────
-    duration = 0.0
-    if isinstance(wav_result, bytes) and wav_result:
-        try:
-            duration = _wav_duration(wav_result)
-            # 1. Local disk — primary fast storage
-            if subject_id:
-                try:
-                    local_path = await write_audio(subject_id, cache_id, language, idx, wav_result)
-                    _log(f"[Pregen] slide {idx+1}: audio ✓ local → {local_path}")
-                except Exception as e:
-                    _log(f"[Pregen] slide {idx+1}: audio local write failed (non-fatal) — {e}")
-            # 2. B2 — cloud backup / CDN
-            b2_path  = f"ai-teaching/{cache_id}/audio_{idx}.wav"
-            slide["audioUrl"] = await upload_to_b2(wav_result, b2_path, "audio/wav")
-            slide["duration"] = duration
-            _log(f"[Pregen] slide {idx+1}: audio ✓ {round(duration, 1)}s B2 → {slide['audioUrl']}")
-        except Exception as e:
-            _log(f"[Pregen] slide {idx+1}: audio B2 upload failed — {e}")
-    else:
-        err = wav_result if isinstance(wav_result, Exception) else "no output"
-        _log(f"[Pregen] slide {idx+1}: audio skipped ({err})")
+        if not needs_img and not needs_aud:
+            break   # both already filled from a previous attempt
 
+        if attempt > 1:
+            _log(f"[Pregen] slide {idx+1}: retry attempt {attempt} (waiting {_RETRY_WAIT_S}s)...")
+            await asyncio.sleep(_RETRY_WAIT_S)
+
+        # Run only what's still missing
+        if needs_img and needs_aud:
+            img_result, wav_result = await asyncio.gather(
+                _wan2gp_image(img_prompt),
+                _voxcpm_tts(narration, language),
+                return_exceptions=True,
+            )
+        elif needs_img:
+            img_result = await _wan2gp_image(img_prompt)
+            wav_result = None
+        else:  # needs_aud only
+            img_result = None
+            wav_result = await _voxcpm_tts(narration, language)
+
+        # ── Image ────────────────────────────────────────────────────────────
+        if needs_img and isinstance(img_result, bytes) and img_result:
+            try:
+                if subject_id:
+                    try:
+                        local_path = await write_image(subject_id, cache_id, idx, img_result)
+                        _log(f"[Pregen] slide {idx+1}: image ✓ local → {local_path}")
+                    except Exception as e:
+                        _log(f"[Pregen] slide {idx+1}: image local write failed (non-fatal) — {e}")
+                b2_path = f"ai-teaching/{cache_id}/slide_{idx}.png"
+                slide["infographicUrl"] = await upload_to_b2(img_result, b2_path, "image/png")
+                _log(f"[Pregen] slide {idx+1}: image ✓ B2 → {slide['infographicUrl']}")
+            except Exception as e:
+                _log(f"[Pregen] slide {idx+1}: image B2 upload failed (attempt {attempt}) — {e}")
+        elif needs_img:
+            err = img_result if isinstance(img_result, Exception) else "no output"
+            _log(f"[Pregen] slide {idx+1}: image attempt {attempt} failed ({err})")
+
+        # ── Audio ────────────────────────────────────────────────────────────
+        if needs_aud and isinstance(wav_result, bytes) and wav_result:
+            try:
+                duration = _wav_duration(wav_result)
+                if subject_id:
+                    try:
+                        local_path = await write_audio(subject_id, cache_id, language, idx, wav_result)
+                        _log(f"[Pregen] slide {idx+1}: audio ✓ local → {local_path}")
+                    except Exception as e:
+                        _log(f"[Pregen] slide {idx+1}: audio local write failed (non-fatal) — {e}")
+                b2_path = f"ai-teaching/{cache_id}/audio_{idx}.wav"
+                slide["audioUrl"] = await upload_to_b2(wav_result, b2_path, "audio/wav")
+                slide["duration"] = duration
+                _log(f"[Pregen] slide {idx+1}: audio ✓ {round(duration, 1)}s B2 → {slide['audioUrl']}")
+            except Exception as e:
+                _log(f"[Pregen] slide {idx+1}: audio B2 upload failed (attempt {attempt}) — {e}")
+        elif needs_aud:
+            err = wav_result if isinstance(wav_result, Exception) else "no output"
+            _log(f"[Pregen] slide {idx+1}: audio attempt {attempt} failed ({err})")
+
+    # Log if still missing after all retries (Layer 2 will catch these)
+    if _needs_image(slide):
+        _log(f"[Pregen] slide {idx+1}: image STILL missing after {_INLINE_RETRIES+1} attempts — will be caught by auto-retry")
+    if _needs_audio(slide):
+        _log(f"[Pregen] slide {idx+1}: audio STILL missing after {_INLINE_RETRIES+1} attempts — will be caught by auto-retry")
+
+    duration = slide.get("duration", 0.0)
     return slide, duration
 
 
@@ -681,6 +753,287 @@ async def run_pregen_batch(
             f"done={_state.done} failed={_state.failed} "
             f"elapsed={elapsed}s ══════════════"
         )
+        # ── Layer 2: Auto-trigger media retry after every batch ───────────────
+        # Catches any slides where inline retries (Layer 1) were exhausted.
+        # Runs only if there are actually missing media rows — safe no-op otherwise.
+        _log("[Pregen] Auto-triggering media retry pass (Layer 2)...")
+        try:
+            await retry_media_for_rows(subject_id, db_factory)
+        except Exception as e:
+            _log(f"[Pregen] Auto-retry pass failed (non-fatal): {e}")
+
+
+# ── Layer 2: Smart Media Retry ───────────────────────────────────────────────
+async def retry_media_for_rows(subject_id: str, db_factory) -> None:
+    """
+    Background job: fill in ONLY the missing images/audio for 'done' rows.
+    Does NOT re-run Ollama. Reads existing slide text from DB, regenerates only
+    slides where infographicUrl or audioUrl is null/empty.
+    Slides within each question are processed IN PARALLEL (asyncio.gather).
+    Rows are processed sequentially to avoid GPU OOM.
+
+    Called automatically after every batch (Layer 2 safety net).
+    Can also be triggered manually via POST /pregen/retry-media.
+
+    BUG FIXES applied here:
+    1. _retry_one_slide is defined OUTSIDE the for-row loop to avoid Python
+       closure bug where asyncio.gather coroutines captured wrong loop variables.
+    2. Subject NAME (not UUID) is used for local cache path to match main pipeline.
+    3. DB is always written if any slide has media, not only when NEW media was
+       generated this run (fixes partial-data-not-saved regression).
+    4. Confirmation logging added for every save step.
+    """
+    global _retry_state
+    _retry_state = RetryState(
+        running    = True,
+        subject_id = subject_id,
+        started_at = time.time(),
+    )
+    _log(f"[Retry] == Media retry pass started for subject={subject_id} ==")
+
+    # ── OUTSIDE the row loop to avoid closure bug ──────────────────────────────
+    async def _retry_one_slide(
+        idx: int,
+        slide: dict,
+        cache_id: str,
+        subject_name: str,
+        language: str,
+    ) -> tuple:
+        """
+        Returns (idx, updated_slide, changed).
+        Runs image + audio concurrently within the slide.
+        All exceptions are caught so one bad slide never kills the others.
+        All variables passed explicitly — no closure capture from outer loop.
+        """
+        needs_img = _needs_image(slide)
+        needs_aud = _needs_audio(slide)
+        if not needs_img and not needs_aud:
+            return idx, slide, False   # nothing to do
+
+        _log(f"[Retry] slide {idx+1}: needs_img={needs_img} needs_aud={needs_aud}")
+
+        slide_title   = slide.get("title", "Concept")
+        slide_content = slide.get("infographic") or slide.get("content") or ""
+        key_points    = slide.get("keyPoints") or []
+        is_story      = slide.get("isStory", False)
+        is_tips       = slide.get("isTips", False)
+        kp_str        = ", ".join(key_points[:3]) if key_points else ""
+        if is_story:
+            style_hint = "warm illustrated story scene, narrative art, soft warm colors, storybook illustration style"
+        elif is_tips:
+            style_hint = "memory tips infographic, lightbulb icons, numbered list visual, bright yellow and blue palette"
+        else:
+            style_hint = "educational diagram, textbook illustration, labeled arrows, clear section boxes, blue and white color scheme"
+
+        img_prompt = (
+            f"Educational infographic poster: \"{slide_title}\". "
+            f"Topic: {slide_content[:120]}. "
+            f"{'Key concepts shown: ' + kp_str + '. ' if kp_str else ''}"
+            f"Style: {style_hint}. "
+            f"Visual design: clean layout, high contrast text labels, white background, professional academic look. "
+            f"Negative: blurry, low quality, pixelated, dark background."
+        )
+        narration = prepare_for_tts(slide.get("narration") or slide.get("content") or "")
+
+        img_coro = _wan2gp_image(img_prompt) if needs_img else asyncio.sleep(0, result=None)
+        aud_coro = _voxcpm_tts(narration, language) if needs_aud else asyncio.sleep(0, result=None)
+        img_result, wav_result = await asyncio.gather(
+            img_coro, aud_coro, return_exceptions=True
+        )
+
+        changed = False
+
+        if needs_img and isinstance(img_result, bytes) and img_result:
+            try:
+                if subject_name:
+                    try:
+                        await write_image(subject_name, cache_id, idx, img_result)
+                        _log(f"[Retry] slide {idx+1}: image saved local disk")
+                    except Exception as le:
+                        _log(f"[Retry] slide {idx+1}: local image write failed (non-fatal): {le}")
+                b2_path = f"ai-teaching/{cache_id}/slide_{idx}.png"
+                b2_url = await upload_to_b2(img_result, b2_path, "image/png")
+                slide["infographicUrl"] = b2_url
+                _log(f"[Retry] slide {idx+1}: image OK -> {b2_url[:70]}")
+                changed = True
+            except Exception as e:
+                _log(f"[Retry] slide {idx+1}: image upload failed -- {e}")
+        elif needs_img:
+            _log(f"[Retry] slide {idx+1}: image still failed -- "
+                 f"{'exception: ' + str(img_result) if isinstance(img_result, Exception) else 'no output'}")
+
+        if needs_aud and isinstance(wav_result, bytes) and wav_result:
+            try:
+                duration = _wav_duration(wav_result)
+                if subject_name:
+                    try:
+                        await write_audio(subject_name, cache_id, language, idx, wav_result)
+                        _log(f"[Retry] slide {idx+1}: audio saved local disk")
+                    except Exception as le:
+                        _log(f"[Retry] slide {idx+1}: local audio write failed (non-fatal): {le}")
+                b2_path = f"ai-teaching/{cache_id}/audio_{idx}.wav"
+                b2_url = await upload_to_b2(wav_result, b2_path, "audio/wav")
+                slide["audioUrl"] = b2_url
+                slide["duration"] = duration
+                _log(f"[Retry] slide {idx+1}: audio OK {round(duration,1)}s -> {b2_url[:70]}")
+                changed = True
+            except Exception as e:
+                _log(f"[Retry] slide {idx+1}: audio upload failed -- {e}")
+        elif needs_aud:
+            _log(f"[Retry] slide {idx+1}: audio still failed -- "
+                 f"{'exception: ' + str(wav_result) if isinstance(wav_result, Exception) else 'no output'}")
+
+        return idx, slide, changed
+
+    try:
+        async with db_factory() as db:
+            # Bug Fix 2: Get subject NAME for local cache path.
+            # Main pregen uses subject name not UUID for the local folder path.
+            # Two-step approach to avoid asyncpg type inference bug with
+            # COALESCE(uuid_col::text, text_col) in a JOIN query.
+            name_row = (await db.execute(
+                text("SELECT name FROM subjects WHERE subject_id = :subj LIMIT 1"),
+                {"subj": subject_id},
+            )).fetchone()
+            subject_name = name_row.name if name_row else subject_id
+
+            rows = (await db.execute(
+                text("""
+                    SELECT id::text, question_hash, question_text, language,
+                           subject_id, presentation_slides, slide_audio_urls
+                    FROM teaching_qa_cache
+                    WHERE subject_id = :subj
+                      AND pregen_status = 'done'
+                      AND (
+                        jsonb_array_length(COALESCE(presentation_slides, '[]'::jsonb)) = 0
+                        OR jsonb_array_length(COALESCE(slide_audio_urls->'urls', '[]'::jsonb)) = 0
+                        OR EXISTS(
+                            SELECT 1 FROM jsonb_array_elements(COALESCE(presentation_slides,'[]'::jsonb)) s
+                            WHERE (s->>'infographicUrl') IS NULL OR (s->>'infographicUrl') = ''
+                        )
+                        OR EXISTS(
+                            SELECT 1 FROM jsonb_array_elements(COALESCE(presentation_slides,'[]'::jsonb)) s
+                            WHERE (s->>'audioUrl') IS NULL OR (s->>'audioUrl') = ''
+                        )
+                      )
+                    ORDER BY created_at ASC
+                """),
+                {"subj": subject_id},
+            )).fetchall()
+
+        _retry_state.total = len(rows)
+        if not rows:
+            _log("[Retry] No rows with missing media -- nothing to do.")
+            return
+
+        _log(f"[Retry] Found {len(rows)} rows with missing media")
+
+        for row in rows:
+            cache_id     = row.id
+            language     = row.language or "en-IN"
+            # subject_name fetched once above (before loop) — same for all rows
+            q_hash       = row.question_hash or ""
+            slides       = list(row.presentation_slides or [])
+
+            _retry_state.current_cache_id = cache_id
+            _log(f"[Retry] -- Processing: {(row.question_text or '')[:60]}")
+
+            if not slides:
+                _log(f"[Retry] {cache_id}: no slides in DB -- skipping (needs full regen)")
+                _retry_state.failed += 1
+                continue
+
+            # Bug Fix 1: pass all variables explicitly as args (not captured via closure)
+            _retry_state.current_step = f"all-slides:{len(slides)}"
+            results = await asyncio.gather(
+                *[_retry_one_slide(i, s, cache_id, subject_name, language)
+                  for i, s in enumerate(slides)],
+                return_exceptions=True,
+            )
+
+            any_new_media = False
+            for res in results:
+                if isinstance(res, Exception):
+                    _log(f"[Retry] A slide coroutine raised: {res}")
+                    continue
+                idx_r, updated_slide, slide_changed = res
+                slides[idx_r] = updated_slide
+                if slide_changed:
+                    any_new_media = True
+
+            # Bug Fix 3: Always write DB if any slide has SOME media,
+            # not only if new media was generated in this run.
+            slides_with_img = sum(1 for s in slides if (s.get("infographicUrl") or "").startswith("http"))
+            slides_with_aud = sum(1 for s in slides if (s.get("audioUrl") or "").startswith("http"))
+
+            if slides_with_img == 0 and slides_with_aud == 0:
+                _log(f"[Retry] {cache_id}: no media at all -- marking failed")
+                _retry_state.failed += 1
+                continue
+
+            if not any_new_media:
+                _log(f"[Retry] {cache_id}: no new media this run -- syncing existing partial data")
+
+            audio_url_list = [
+                {"slideIndex": i, "audioUrl": s["audioUrl"], "duration": s.get("duration", 0)}
+                for i, s in enumerate(slides)
+                if (s.get("audioUrl") or "").startswith("http")
+            ]
+            total_duration = sum(e["duration"] for e in audio_url_list)
+
+            async with db_factory() as db:
+                await db.execute(
+                    text("""
+                        UPDATE teaching_qa_cache
+                        SET presentation_slides    = CAST(:slides AS jsonb),
+                            slide_audio_urls       = CAST(:audio  AS jsonb),
+                            total_duration_seconds = :dur
+                        WHERE id = CAST(:id AS uuid)
+                    """),
+                    {
+                        "slides": json.dumps(slides),
+                        "audio":  json.dumps({"language": language, "urls": audio_url_list}),
+                        "dur":    total_duration,
+                        "id":     cache_id,
+                    },
+                )
+                await db.commit()
+            _log(f"[Retry] DB updated: {cache_id} img={slides_with_img}/{len(slides)} aud={slides_with_aud}/{len(slides)}")
+
+            if q_hash and subject_id:
+                try:
+                    await write_slide_cache(subject_id, q_hash, {
+                        "cache_id":            cache_id,
+                        "presentationSlides":  slides,
+                        "slideAudioUrls":      {"language": language, "urls": audio_url_list},
+                        "totalDurationSeconds": total_duration,
+                    })
+                    _log(f"[Retry] Local cache written: {subject_id[:8]}/{q_hash[:12]}.json")
+                    
+                    # Also invalidate Redis L1 cache so it pulls the fresh data next time
+                    try:
+                        await delete_from_cache(q_hash, subject_id)
+                    except Exception as e:
+                        _log(f"[Retry] Redis cache delete failed: {e}")
+                except Exception as e:
+                    _log(f"[Retry] local cache write failed (non-fatal): {e}")
+
+            _log(f"[Retry] OK {cache_id}: img={slides_with_img}/{len(slides)} aud={slides_with_aud}/{len(slides)}")
+            _retry_state.done += 1
+
+    except Exception as e:
+        _log(f"[Retry] Fatal error: {e}")
+        _retry_state.last_error = str(e)
+
+    finally:
+        _retry_state.running      = False
+        _retry_state.current_step = ""
+        elapsed = round(time.time() - _retry_state.started_at, 1)
+        _log(
+            f"[Retry] == Media retry complete: "
+            f"done={_retry_state.done} failed={_retry_state.failed} elapsed={elapsed}s =="
+        )
+
 
 async def predict_questions(doc_id: str, subject_id: str, chunk_texts: list[str], async_session_maker) -> int:
     """

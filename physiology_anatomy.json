@@ -1,0 +1,69 @@
+{
+  "subject": {
+    "id": "a1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d",
+    "name": "Biology",
+    "slug": "biology"
+  },
+  "chapter": {
+    "id": "b2c3d4e5-f6a7-8b9c-0d1e-2f3a4b5c6d7e",
+    "chapter_number": 5,
+    "title": "Human Physiology and Anatomy"
+  },
+  "topic": {
+    "id": "c3d4e5f6-a7b8-9c0d-1e2f-3a4b5c6d7e8f",
+    "topic_number": "5.1",
+    "title": "The Circulatory System"
+  },
+  "document": {
+    "id": "d4e5f6a7-b8c9-0d1e-2f3a-4b5c6d7e8f9a",
+    "display_name": "CHAPTER - 5 PHYSIOLOGY AND ANATOMY - 5.1.docx",
+    "source_type": "docx",
+    "status": "completed",
+    "created_at": "2026-06-19T10:00:00.000000+00:00"
+  },
+  "questions": [
+    {
+      "id": "e5f6a7b8-c9d0-1e2f-3a4b-5c6d7e8f9a0b",
+      "question_text": "Which chamber of the human heart is responsible for pumping oxygenated blood to the rest of the body?",
+      "question_type": "mcq",
+      "question_format": "mcq",
+      "options": {
+        "A": { "text": "Right Atrium" },
+        "B": { "text": "Right Ventricle" },
+        "C": { "text": "Left Atrium" },
+        "D": { "text": "Left Ventricle" }
+      },
+      "correct_answer": "D",
+      "explanation": "The left ventricle has the thickest muscular wall and pumps oxygenated blood through the aorta to the systemic circulation.",
+      "difficulty": "Easy",
+      "marks": 2
+    },
+    {
+      "id": "f6a7b8c9-d0e1-2f3a-4b5c-6d7e8f9a0b1c",
+      "question_text": "Describe the primary function of the SA (sinoatrial) node in the heart.",
+      "question_type": "subjective",
+      "question_format": "subjective",
+      "options": null,
+      "correct_answer": null,
+      "explanation": "The SA node is the natural pacemaker of the heart. It initiates the electrical impulses that determine the heart rate and coordinates the contraction of the heart muscle.",
+      "difficulty": "Medium",
+      "marks": 5
+    },
+    {
+      "id": "a7b8c9d0-e1f2-3a4b-5c6d-7e8f9a0b1c2d",
+      "question_text": "Gas exchange in the lungs occurs in which of the following structures?",
+      "question_type": "mcq",
+      "question_format": "mcq",
+      "options": {
+        "A": { "text": "Bronchioles" },
+        "B": { "text": "Alveoli" },
+        "C": { "text": "Trachea" },
+        "D": { "text": "Diaphragm" }
+      },
+      "correct_answer": "B",
+      "explanation": "Alveoli are tiny, balloon-shaped air sacs where oxygen and carbon dioxide are exchanged with the blood.",
+      "difficulty": "Easy",
+      "marks": 2
+    }
+  ]
+}

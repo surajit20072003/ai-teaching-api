@@ -40,6 +40,10 @@ async def set_to_cache(q_hash: str, subject_id: str, value: dict, ttl: int = 604
     r = get_redis()
     await r.set(cache_key(q_hash, subject_id), json.dumps(value), ex=ttl)
 
+async def delete_from_cache(q_hash: str, subject_id: str = ""):
+    r = get_redis()
+    await r.delete(cache_key(q_hash, subject_id))
+
 async def increment_usage(q_hash: str, subject_id: str = ""):
     r = get_redis()
     await r.incr(f"usage:{q_hash}:{subject_id}")

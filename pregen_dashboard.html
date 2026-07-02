@@ -268,6 +268,12 @@
       <div class="glow" style="background:var(--danger);"></div>
     </div>
     <div class="stat-card">
+      <div class="label">Media Issues</div>
+      <div class="value" id="statMediaIssues" style="color:var(--warn);">—</div>
+      <div class="sub" id="statMediaSub">done rows missing img/audio</div>
+      <div class="glow" style="background:var(--warn);"></div>
+    </div>
+    <div class="stat-card">
       <div class="label">Speed</div>
       <div class="value" id="statSpeed" style="font-size:24px;">—</div>
       <div class="sub">questions / min</div>
@@ -319,6 +325,50 @@
 
       <!-- Error list -->
       <div class="error-list" id="errorList"></div>
+    </div>
+  </div>
+
+  <!-- Media Retry Control -->
+  <div class="section">
+    <div class="section-header">
+      <span>🔧</span>
+      <h2>Media Retry</h2>
+      <div id="retryBadge" class="badge badge-idle" style="margin-left:auto;">● Idle</div>
+    </div>
+    <div class="section-body">
+      <div style="font-size:12px;color:var(--muted);margin-bottom:16px;padding:10px 14px;background:rgba(255,169,77,.06);border:1px solid rgba(255,169,77,.2);border-radius:8px;">
+        ⚡ <strong>Auto-runs after every batch</strong> — fills in missing images &amp; audio without re-running Ollama. Use the button below only for manual trigger.
+      </div>
+      <div class="controls">
+        <div class="field">
+          <label>Subject</label>
+          <select id="retrySubjectSelect">
+            <option value="">— Select subject —</option>
+          </select>
+        </div>
+        <button class="btn btn-ghost" id="btnAudit" onclick="auditMissingMedia()">🔍 Audit Media</button>
+        <button class="btn btn-success" id="btnStartRetry" onclick="startRetry()">🔧 Fix Missing Media</button>
+      </div>
+
+      <!-- Retry Progress -->
+      <div class="progress-wrap" id="retryProgressWrap" style="display:none;">
+        <div class="progress-label">
+          <span id="retryProgressLabel">Fixing media...</span>
+          <span id="retryProgressPct">0%</span>
+        </div>
+        <div class="progress-track">
+          <div class="progress-fill" id="retryProgressFill" style="width:0%;background:linear-gradient(90deg,var(--warn),var(--accent2));"></div>
+        </div>
+      </div>
+
+      <!-- Live retry status line -->
+      <div class="live-status" id="retryLiveStatus" style="margin-top:16px;">
+        <div class="live-dot" id="retryLiveDot"></div>
+        <div id="retryLiveText">Idle — runs automatically after each batch.</div>
+      </div>
+
+      <!-- Audit result -->
+      <div id="retryAuditResult" style="margin-top:12px;font-size:13px;"></div>
     </div>
   </div>
 
@@ -560,7 +610,7 @@
     try {
       const r = await fetch(`${API()}/subjects`);
       const d = await r.json();
-      const selIds = ['subjectSelect','manualSubject','docSubject','impSubject'];
+      const selIds = ['subjectSelect','manualSubject','docSubject','impSubject','retrySubjectSelect'];
       selIds.forEach(id => {
         const el = document.getElementById(id);
         if (!el) return;
@@ -628,6 +678,8 @@
         await loadPending();
         document.getElementById('btnStart').disabled = false;
         document.getElementById('btnStop').disabled  = true;
+        // Auto-chain: poll the retry pass that kicks off after batch ends
+        setTimeout(() => pollRetryStatus(true), 3000);
       }
     } catch (e) {
       log(`Status poll error: ${e.message}`, 'fail');
@@ -738,7 +790,7 @@
     } catch (e) { log(`Stop error: ${e.message}`, 'fail'); }
   }
 
-  // ── Retry failed ─────────────────────────────────────────────────────────────
+  // ── Retry failed (full regen) ────────────────────────────────────────────────
   async function retryFailed() {
     const subjectId = document.getElementById('subjectSelect').value;
     if (!subjectId) { alert('Select a subject first.'); return; }
@@ -753,6 +805,176 @@
       log(`Retry: ${d.message || JSON.stringify(d)}`, 'ok');
       await loadPending();
     } catch (e) { log(`Retry error: ${e.message}`, 'fail'); }
+  }
+
+  // ── Media Retry (smart — only missing img/audio) ───────────────────────────
+  let retryPollTimer = null;
+
+  async function auditMissingMedia() {
+    const subjectId = document.getElementById('retrySubjectSelect').value
+                   || document.getElementById('subjectSelect').value;
+    const resultEl  = document.getElementById('retryAuditResult');
+    if (!subjectId) { resultEl.innerHTML = '<span style="color:var(--warn)">⚠ Select a subject first.</span>'; return; }
+    resultEl.innerHTML = '<span style="color:var(--muted)">Auditing...</span>';
+    try {
+      // Check current retry state first
+      const r = await fetch(`${API()}/pregen/retry-status`);
+      const d = await r.json();
+      updateRetryUI(d);
+
+      // Show audit summary
+      const issues = d.total > 0 ? (d.total - d.done) : null;
+      if (d.running) {
+        resultEl.innerHTML = `<span style="color:var(--accent)">⟳ Retry in progress — ${d.done}/${d.total} rows fixed so far...</span>`;
+      } else if (d.total > 0) {
+        const fixed = d.done, remain = d.failed;
+        resultEl.innerHTML = `
+          <div style="background:rgba(255,169,77,.07);border:1px solid rgba(255,169,77,.2);border-radius:8px;padding:12px 16px;">
+            <strong style="color:var(--warn)">Last retry run:</strong><br>
+            ✅ Fixed: <b>${fixed}</b> &nbsp;|&nbsp;
+            ❌ Still failing: <b>${remain}</b> &nbsp;|&nbsp;
+            Total found: <b>${d.total}</b><br>
+            <span style="color:var(--muted);font-size:12px;">Elapsed: ${d.elapsed_seconds}s</span>
+          </div>`;
+        document.getElementById('statMediaIssues').textContent = remain;
+        document.getElementById('statMediaIssues').style.color = remain > 0 ? 'var(--warn)' : 'var(--accent2)';
+      } else {
+        resultEl.innerHTML = '<span style="color:var(--accent2)">✓ No previous retry data. Click "Fix Missing Media" to run an audit + fix.</span>';
+        document.getElementById('statMediaIssues').textContent = '0';
+        document.getElementById('statMediaIssues').style.color = 'var(--accent2)';
+      }
+      log(`Media audit complete for subject=${subjectId}`, 'ok');
+    } catch(e) {
+      resultEl.innerHTML = `<span style="color:var(--danger)">✗ Audit error: ${e.message}</span>`;
+      log(`Audit error: ${e.message}`, 'fail');
+    }
+  }
+
+  async function startRetry() {
+    const subjectId = document.getElementById('retrySubjectSelect').value
+                   || document.getElementById('subjectSelect').value;
+    const resultEl  = document.getElementById('retryAuditResult');
+    if (!subjectId) { resultEl.innerHTML = '<span style="color:var(--warn)">⚠ Select a subject first.</span>'; return; }
+
+    document.getElementById('btnStartRetry').disabled = true;
+    document.getElementById('btnAudit').disabled = true;
+    resultEl.innerHTML = '<span style="color:var(--muted)">Starting retry...</span>';
+
+    try {
+      const r = await fetch(`${API()}/pregen/retry-media`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ subjectId }),
+      });
+      const d = await r.json();
+      if (d.error) {
+        // Already running — just start polling
+        log(`Retry already running: ${d.error}`, 'warn');
+      } else if (d.problem_rows === 0) {
+        resultEl.innerHTML = '<span style="color:var(--accent2)">✓ All media is complete — nothing to fix!</span>';
+        document.getElementById('statMediaIssues').textContent = '0';
+        document.getElementById('statMediaIssues').style.color = 'var(--accent2)';
+        document.getElementById('btnStartRetry').disabled = false;
+        document.getElementById('btnAudit').disabled = false;
+        log('Media retry: nothing to fix — all complete!', 'ok');
+        return;
+      } else {
+        log(`Media retry started — ${d.problem_rows} rows with missing media`, 'ok');
+        resultEl.innerHTML = `<span style="color:var(--accent)">⟳ Retry started — fixing ${d.problem_rows} rows...</span>`;
+      }
+      // Start polling
+      retryPollTimer = setTimeout(() => pollRetryStatus(false), 2000);
+    } catch(e) {
+      resultEl.innerHTML = `<span style="color:var(--danger)">✗ ${e.message}</span>`;
+      log(`Retry start error: ${e.message}`, 'fail');
+      document.getElementById('btnStartRetry').disabled = false;
+      document.getElementById('btnAudit').disabled = false;
+    }
+  }
+
+  async function pollRetryStatus(silent = false) {
+    clearTimeout(retryPollTimer);
+    try {
+      const r = await fetch(`${API()}/pregen/retry-status`);
+      const d = await r.json();
+      updateRetryUI(d);
+
+      if (d.running) {
+        if (!silent) log(`[Retry] ${d.done}/${d.total} rows fixed — step: ${d.current_step || '…'}`, 'info');
+        
+        // Restore the UI text if we refreshed the page
+        const resultEl = document.getElementById('retryAuditResult');
+        if (!resultEl.innerHTML.includes('Retry in progress')) {
+           resultEl.innerHTML = `<span style="color:var(--accent)">⟳ Retry in progress — fixing ${d.total - d.done} remaining rows...</span>`;
+        }
+
+        retryPollTimer = setTimeout(() => pollRetryStatus(false), 3000);
+      } else {
+        // Done
+        document.getElementById('btnStartRetry').disabled = false;
+        document.getElementById('btnAudit').disabled = false;
+        if (d.total > 0) {
+          log(`[Retry] Complete — fixed=${d.done} still-failing=${d.failed} elapsed=${d.elapsed_seconds}s`, 'ok');
+          document.getElementById('statMediaIssues').textContent = d.failed;
+          document.getElementById('statMediaIssues').style.color = d.failed > 0 ? 'var(--warn)' : 'var(--accent2)';
+          document.getElementById('retryAuditResult').innerHTML = `
+            <div style="background:rgba(0,212,170,.07);border:1px solid rgba(0,212,170,.25);border-radius:8px;padding:12px 16px;">
+              <strong style="color:var(--accent2)">✓ Retry Complete</strong><br>
+              ✅ Fixed: <b>${d.done}</b> &nbsp;|&nbsp;
+              ❌ Still failing: <b>${d.failed}</b> &nbsp;|&nbsp;
+              Elapsed: <b>${Math.round(d.elapsed_seconds)}s</b>
+            </div>`;
+        } else if (!silent) {
+          // Nothing was found when auto-triggered — that's fine, stay quiet
+          document.getElementById('retryLiveText').textContent = 'Idle — all media complete.';
+        }
+      }
+    } catch(e) {
+      if (!silent) log(`Retry status poll error: ${e.message}`, 'fail');
+    }
+  }
+
+  function updateRetryUI(d) {
+    // Badge
+    const badge = document.getElementById('retryBadge');
+    const dot   = document.getElementById('retryLiveDot');
+    const text  = document.getElementById('retryLiveText');
+    const wrap  = document.getElementById('retryProgressWrap');
+
+    if (d.running) {
+      badge.className  = 'badge badge-running';
+      badge.textContent = '● Running';
+      dot.className    = 'live-dot running';
+      text.textContent = d.current_step
+        ? `Fixing ${d.current_step.includes('audio') ? 'audio' : d.current_step.includes('image') ? 'image' : 'media'} for row ${d.done + 1}/${d.total}…`
+        : `Fixing media… (${d.done}/${d.total} done)`;
+      wrap.style.display = 'block';
+      // Progress bar
+      if (d.total > 0) {
+        const pct = Math.round((d.done / d.total) * 100);
+        document.getElementById('retryProgressFill').style.width = `${pct}%`;
+        document.getElementById('retryProgressPct').textContent  = `${pct}%`;
+        document.getElementById('retryProgressLabel').textContent = `${d.done} / ${d.total} rows fixed`;
+      }
+      // Update stat card live
+      document.getElementById('statMediaIssues').textContent = d.total - d.done;
+      document.getElementById('statMediaIssues').style.color = 'var(--warn)';
+    } else if (d.total > 0) {
+      badge.className  = d.failed > 0 ? 'badge badge-failed' : 'badge badge-done';
+      badge.textContent = d.failed > 0 ? `⚠ ${d.failed} unfixed` : '✓ Done';
+      dot.className    = d.failed > 0 ? 'live-dot failed' : 'live-dot';
+      text.textContent = d.failed > 0
+        ? `Done — ${d.done} fixed, ${d.failed} still have missing media.`
+        : `Done — all ${d.done} rows fixed!`;
+      wrap.style.display = 'block';
+      document.getElementById('retryProgressFill').style.width = '100%';
+      document.getElementById('retryProgressPct').textContent  = '100%';
+      document.getElementById('retryProgressLabel').textContent = `${d.done} / ${d.total} rows fixed`;
+    } else {
+      badge.className   = 'badge badge-idle';
+      badge.textContent = '● Idle';
+      dot.className     = 'live-dot';
+    }
   }
 
   // ── Add question manually ────────────────────────────────────────────────────
@@ -1058,8 +1280,12 @@
   (async () => {
     autoDetectBase();
     await loadSubjects();
+    // Populate the retry subject dropdown from the main subject list
+    // (loadSubjects already fills retrySubjectSelect via the selIds array)
     await loadPending();
     await pollStatus();
+    // Check if a retry is already running (e.g. after page refresh mid-retry)
+    await pollRetryStatus(true);
   })();
 </script>
 </body>

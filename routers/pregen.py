@@ -8,6 +8,8 @@ Endpoints:
   GET  /pregen/status              — live progress
   POST /pregen/retry-failed        — re-queue all 'failed' rows for a subject
   GET  /pregen/pending-count       — count rows not yet pre-generated
+  POST /pregen/retry-media         — fill in missing images/audio for 'done' rows
+  GET  /pregen/retry-status        — live progress of the media retry job
 """
 from __future__ import annotations
 
@@ -19,7 +21,10 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import get_db, AsyncSessionLocal
-from core.pregen import run_pregen_batch, get_state, request_stop
+from core.pregen import (
+    run_pregen_batch, get_state, request_stop,
+    retry_media_for_rows, get_retry_state,
+)
 
 router = APIRouter(prefix="/pregen", tags=["Pre-Generation"])
 
@@ -209,3 +214,94 @@ async def add_question(body: dict, db: AsyncSession = Depends(get_db)):
     await db.commit()
 
     return {"message": "Question added successfully", "id": new_id, "question_hash": q_hash}
+
+
+# ── POST /pregen/retry-media ──────────────────────────────
+@router.post("/retry-media")
+async def trigger_retry_media(
+    body: dict,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Smart media retry — re-generates ONLY the missing images and audio
+    for rows that are already 'done' but have incomplete media.
+
+    Does NOT re-run Ollama. Reads existing slide text from DB.
+    Safe to call manually at any time. Also runs automatically after every batch.
+
+    Body:
+        subjectId (required) — subject to audit and fix
+    """
+    subject_id = body.get("subjectId", "").strip()
+    if not subject_id:
+        raise HTTPException(status_code=400, detail="subjectId is required")
+
+    retry_st = get_retry_state()
+    if retry_st["running"]:
+        return JSONResponse(
+            status_code=409,
+            content={
+                "error": "Media retry already running",
+                "subject_id": retry_st["subject_id"],
+                "done":       retry_st["done"],
+                "total":      retry_st["total"],
+                "tip":        "Poll GET /pregen/retry-status for live progress",
+            },
+        )
+
+    # Count problem rows before starting so we can give a useful response
+    problem_rows = (await db.execute(
+        text("""
+            SELECT COUNT(*) FROM teaching_qa_cache
+            WHERE subject_id = :subj
+              AND pregen_status = 'done'
+              AND (
+                jsonb_array_length(COALESCE(presentation_slides, '[]'::jsonb)) = 0
+                OR jsonb_array_length(COALESCE(slide_audio_urls->'urls', '[]'::jsonb)) = 0
+                OR EXISTS(
+                    SELECT 1 FROM jsonb_array_elements(COALESCE(presentation_slides,'[]'::jsonb)) s
+                    WHERE (s->>'infographicUrl') IS NULL OR (s->>'infographicUrl') = ''
+                )
+                OR EXISTS(
+                    SELECT 1 FROM jsonb_array_elements(COALESCE(presentation_slides,'[]'::jsonb)) s
+                    WHERE (s->>'audioUrl') IS NULL OR (s->>'audioUrl') = ''
+                )
+              )
+        """),
+        {"subj": subject_id},
+    )).scalar()
+
+    problem_rows = int(problem_rows or 0)
+    if problem_rows == 0:
+        return {
+            "message": "All media is complete — nothing to retry",
+            "subject_id": subject_id,
+            "problem_rows": 0,
+        }
+
+    background_tasks.add_task(retry_media_for_rows, subject_id, AsyncSessionLocal)
+
+    return {
+        "message": f"Media retry started for {subject_id!r}",
+        "subject_id":   subject_id,
+        "problem_rows": problem_rows,
+        "tip": "Poll GET /pregen/retry-status for live progress",
+    }
+
+
+# ── GET /pregen/retry-status ──────────────────────────────
+@router.get("/retry-status")
+async def retry_status():
+    """
+    Return live progress of the running (or last completed) media retry job.
+
+    Response:
+        running         — true if retry is currently active
+        total           — total rows with missing media found
+        done            — rows successfully fixed
+        failed          — rows that could not be fixed (still missing media)
+        current_step    — e.g. "image:3" or "audio:1" or "both:0"
+        elapsed_seconds — seconds since retry started
+    """
+    return get_retry_state()
