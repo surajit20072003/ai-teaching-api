@@ -46,6 +46,10 @@ class TeachingCache(Base):
     # New: pre-generation tracking
     pregen_status          = Column(String(20), nullable=True)  # None | pending | processing | done | failed
     pregen_completed_at    = Column(TIMESTAMP(timezone=True), nullable=True)
+    # New: Manim video URLs — {slide_index_str: {url, local_path, duration_seconds}}
+    manim_video_urls       = Column(JSONB, default=dict)
+    # New: static image URLs — {slide_index_str: {url, local_path}}
+    image_urls             = Column(JSONB, default=dict)
 
 
 # -- New: Document -------------------------------------------------------------

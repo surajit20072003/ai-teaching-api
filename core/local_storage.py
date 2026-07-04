@@ -13,8 +13,14 @@ Folder structure (per subject, document-centric):
                 meta.json       <- document metadata snapshot
         cache/
             slides/             <- {question_hash}.json (slide data)
-            images/             <- {cache_id}/slide_N.png
-            audio/              <- {cache_id}/{language}/slide_N.wav
+            jobs/               <- unified per-job folder (NEW)
+                {cache_id}/
+                    images/     <- slide_N.png
+                    audio/
+                        {language}/  <- slide_N.wav
+                    manim/      <- slide_N.py + slide_N.mp4
+            images/             <- LEGACY: {cache_id}/slide_N.png  (kept for compat)
+            audio/              <- LEGACY: {cache_id}/{language}/slide_N.wav
 logs/
     uploads.log
     pregen.log
@@ -52,17 +58,37 @@ def get_doc_meta_path(subject_id: str, doc_id: str) -> str:
 def get_slide_cache_path(subject_id: str, question_hash: str) -> str:
     return f"{SUBJECTS_PATH}/{subject_id}/cache/slides/{question_hash}.json"
 
+# ── NEW: Unified job folder helpers ───────────────────────────────────────────
+
+def get_job_dir(subject_id: str, cache_id: str) -> str:
+    """Root folder for a single pre-gen job: cache/jobs/{cache_id}/"""
+    return f"{SUBJECTS_PATH}/{subject_id}/cache/jobs/{cache_id}"
+
 def get_image_dir(subject_id: str, cache_id: str) -> str:
-    return f"{SUBJECTS_PATH}/{subject_id}/cache/images/{cache_id}"
+    """Images subfolder inside the unified job folder."""
+    return f"{get_job_dir(subject_id, cache_id)}/images"
 
 def get_image_path(subject_id: str, cache_id: str, slide_index: int) -> str:
     return f"{get_image_dir(subject_id, cache_id)}/slide_{slide_index}.png"
 
 def get_audio_dir(subject_id: str, cache_id: str, language: str) -> str:
-    return f"{SUBJECTS_PATH}/{subject_id}/cache/audio/{cache_id}/{language}"
+    """Audio subfolder (per language) inside the unified job folder."""
+    return f"{get_job_dir(subject_id, cache_id)}/audio/{language}"
 
 def get_audio_path(subject_id: str, cache_id: str, language: str, slide_index: int) -> str:
     return f"{get_audio_dir(subject_id, cache_id, language)}/slide_{slide_index}.wav"
+
+def get_manim_dir(subject_id: str, cache_id: str) -> str:
+    """Manim subfolder inside the unified job folder."""
+    return f"{get_job_dir(subject_id, cache_id)}/manim"
+
+def get_manim_py_path(subject_id: str, cache_id: str, slide_index: int) -> str:
+    """Path for the generated Manim Python source file."""
+    return f"{get_manim_dir(subject_id, cache_id)}/slide_{slide_index}.py"
+
+def get_manim_video_path(subject_id: str, cache_id: str, slide_index: int) -> str:
+    """Path for the rendered Manim MP4 video file."""
+    return f"{get_manim_dir(subject_id, cache_id)}/slide_{slide_index}.mp4"
 
 def get_log_path(log_name: str) -> str:
     """log_name: 'uploads', 'pregen', 'errors'"""
@@ -78,6 +104,8 @@ def ensure_subject_dirs(subject_id: str) -> None:
     dirs = [
         f"{SUBJECTS_PATH}/{subject_id}/documents",
         f"{SUBJECTS_PATH}/{subject_id}/cache/slides",
+        f"{SUBJECTS_PATH}/{subject_id}/cache/jobs",
+        # Legacy dirs kept for backward compat with existing B2 data
         f"{SUBJECTS_PATH}/{subject_id}/cache/images",
         f"{SUBJECTS_PATH}/{subject_id}/cache/audio",
     ]
@@ -208,7 +236,7 @@ async def read_doc_meta(subject_id: str, doc_id: str) -> Optional[dict]:
 # ── Image / Audio Files ───────────────────────────────────────────────────────
 
 async def write_image(subject_id: str, cache_id: str, slide_index: int, image_bytes: bytes) -> str:
-    """Save generated image to local disk. Returns local path."""
+    """Save generated image to local disk (unified jobs/ folder). Returns local path."""
     path = get_image_path(subject_id, cache_id, slide_index)
     os.makedirs(os.path.dirname(path), exist_ok=True)
     async with aiofiles.open(path, "wb") as f:
@@ -216,11 +244,35 @@ async def write_image(subject_id: str, cache_id: str, slide_index: int, image_by
     return path
 
 async def write_audio(subject_id: str, cache_id: str, language: str, slide_index: int, audio_bytes: bytes) -> str:
-    """Save generated audio to local disk. Returns local path."""
+    """Save generated audio to local disk (unified jobs/ folder). Returns local path."""
     path = get_audio_path(subject_id, cache_id, language, slide_index)
     os.makedirs(os.path.dirname(path), exist_ok=True)
     async with aiofiles.open(path, "wb") as f:
         await f.write(audio_bytes)
+    return path
+
+async def write_manim_code(subject_id: str, cache_id: str, slide_index: int, py_code: str) -> str:
+    """
+    Save generated Manim Python source file to local disk.
+    Returns local path to the .py file.
+    """
+    path = get_manim_py_path(subject_id, cache_id, slide_index)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    async with aiofiles.open(path, "w", encoding="utf-8") as f:
+        await f.write(py_code)
+    logger.info(f"[local_storage] Manim code saved: {path} ({len(py_code):,} chars)")
+    return path
+
+async def write_manim_video(subject_id: str, cache_id: str, slide_index: int, mp4_bytes: bytes) -> str:
+    """
+    Save rendered Manim MP4 video to local disk.
+    Returns local path to the .mp4 file.
+    """
+    path = get_manim_video_path(subject_id, cache_id, slide_index)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    async with aiofiles.open(path, "wb") as f:
+        await f.write(mp4_bytes)
+    logger.info(f"[local_storage] Manim video saved: {path} ({len(mp4_bytes):,} bytes)")
     return path
 
 # ── Cleanup ───────────────────────────────────────────────────────────────────
@@ -237,13 +289,19 @@ def delete_document_files(subject_id: str, doc_id: str) -> None:
         logger.info(f"[local_storage] Deleted document dir: {doc_dir}")
 
 def delete_cache_files(subject_id: str, cache_id: str) -> None:
-    """Delete all image and audio files for a cache entry."""
+    """Delete all image, audio, and manim files for a cache entry."""
     import shutil
+    # New unified job folder
+    job_path = get_job_dir(subject_id, cache_id)
+    if os.path.exists(job_path):
+        shutil.rmtree(job_path)
+        logger.info(f"[local_storage] Deleted job dir: {job_path}")
+    # Legacy folders (backward compat)
     for subdir in ["images", "audio"]:
         path = f"{SUBJECTS_PATH}/{subject_id}/cache/{subdir}/{cache_id}"
         if os.path.exists(path):
             shutil.rmtree(path)
-            logger.info(f"[local_storage] Deleted cache dir: {path}")
+            logger.info(f"[local_storage] Deleted legacy cache dir: {path}")
 
 # ── Log Helpers ───────────────────────────────────────────────────────────────
 

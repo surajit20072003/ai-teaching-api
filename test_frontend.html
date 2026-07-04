@@ -327,9 +327,63 @@
             box-shadow: 0 2px 8px rgba(0,0,0,0.1);
             margin-top: 10px;
         }
+        .slide video {
+            max-width: 100%;
+            width: 100%;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            margin-top: 10px;
+            background: #000;
+        }
         audio {
             width: 100%;
             margin-top: 12px;
+        }
+        .manim-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            background: linear-gradient(135deg, #6366f1, #8b5cf6);
+            color: #fff;
+            font-size: 11px;
+            font-weight: 700;
+            padding: 3px 10px;
+            border-radius: 20px;
+            margin-left: 8px;
+            letter-spacing: .4px;
+            vertical-align: middle;
+        }
+        .slide-media-label {
+            font-size: 11px;
+            color: #9ca3af;
+            margin-top: 6px;
+            font-style: italic;
+        }
+        .sync-player {
+            position: relative;
+            margin-top: 10px;
+            border-radius: 8px;
+            overflow: hidden;
+            background: #000;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        .sync-player video {
+            width: 100%;
+            display: block;
+            border-radius: 8px;
+            margin-top: 0;
+            box-shadow: none;
+        }
+        .sync-status {
+            position: absolute;
+            top: 8px; right: 10px;
+            background: rgba(0,0,0,0.55);
+            color: #fff;
+            font-size: 10px;
+            padding: 2px 8px;
+            border-radius: 20px;
+            letter-spacing: .4px;
+            pointer-events: none;
         }
 
         .error-box {
@@ -701,25 +755,141 @@ function renderResult(data) {
                 <span class="cache-badge ${cacheClass}">${cacheText}</span>
             </div>`;
 
+    // Build manim URL lookup: { "0": {url:..., duration_seconds:...}, ... }
+    const manimUrls = data.manimVideoUrls || {};
+    // Fallback image lookup from top-level imageUrls
+    const imageUrls = data.imageUrls || {};
+
     (data.presentationSlides || []).forEach((slide, i) => {
-        const bullets = (slide.bullet_points || []).map(b => `<li>${escHtml(b)}</li>`).join('');
+        const bullets   = (slide.bullet_points || []).map(b => `<li>${escHtml(b)}</li>`).join('');
+        const manimData = manimUrls[String(i)];
+        const manimUrl  = manimData?.url || null;
+        const imgUrl    = slide.infographicUrl || imageUrls[String(i)]?.url || '';
+        const audioUrls = data.slideAudioUrls || [];
+        const audioUrl  = slide.audioUrl || audioUrls[i] || '';
+
+        let mediaHtml = '';
+
+        if (manimUrl) {
+            // ── Synced player: video (visible master) + audio (hidden slave) ──
+            mediaHtml = `
+                <div class="slide-media-label">🎬 Manim animation (${Math.round(manimData.duration_seconds || 0)}s) — audio synced</div>
+                <div class="sync-player" id="sync-wrap-${i}">
+                    <video id="manim-vid-${i}" controls
+                        src="${escHtml(manimUrl)}"
+                        onerror="this.closest('.sync-player').style.display='none'">
+                    </video>
+                    <span class="sync-status" id="sync-status-${i}">🔊 synced</span>
+                </div>
+                <audio id="manim-aud-${i}" src="${escHtml(audioUrl)}" style="display:none" preload="auto"></audio>`;
+        }
+
+        if (imgUrl) {
+            const imgLabel = manimUrl
+                ? `<div class="slide-media-label" style="margin-top:12px">🖼 Infographic</div>`
+                : '';
+            mediaHtml += `${imgLabel}<img src="${escHtml(imgUrl)}" alt="Infographic" onerror="this.style.display='none'">`;
+        }
+
+        // Image-only slides: show normal audio player
+        if (!manimUrl && audioUrl) {
+            mediaHtml += `<audio controls src="${escHtml(audioUrl)}"></audio>`;
+        }
+
+        const manimBadge = manimUrl ? `<span class="manim-badge">✨ Manim</span>` : '';
+
         html += `
             <div class="slide">
-                <h3>Slide ${i + 1}: ${escHtml(slide.title || 'Untitled')}</h3>
+                <h3>Slide ${i + 1}: ${escHtml(slide.title || 'Untitled')}${manimBadge}</h3>
                 ${bullets ? `<ul>${bullets}</ul>` : ''}
                 ${slide.narration ? `<div class="slide-narration">${escHtml(slide.narration)}</div>` : ''}
-                ${slide.infographicUrl
-                    ? `<img src="${escHtml(slide.infographicUrl)}" alt="Infographic" onerror="this.style.display='none'">`
-                    : ''}
-                ${slide.audioUrl
-                    ? `<audio controls src="${escHtml(slide.audioUrl)}"></audio>`
-                    : ''}
+                ${mediaHtml}
             </div>`;
     });
 
     html += `</div>`;
     resultDiv.innerHTML = html;
+
+    // Wire up sync players after DOM is written
+    (data.presentationSlides || []).forEach((_, i) => {
+        const vid      = document.getElementById(`manim-vid-${i}`);
+        const aud      = document.getElementById(`manim-aud-${i}`);
+        const statusEl = document.getElementById(`sync-status-${i}`);
+        if (vid && aud) syncPlayer(vid, aud, statusEl);
+    });
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Sync Engine — video is master, audio is slave
+// ─────────────────────────────────────────────────────────────────
+function syncPlayer(vid, aud, statusEl) {
+    let syncLock  = false;
+    let driftTimer = null;
+
+    function setStatus(text) { if (statusEl) statusEl.textContent = text; }
+
+    // ── video → audio events ──────────────────────────────────────
+    vid.addEventListener('play', () => {
+        if (syncLock) return;
+        aud.currentTime = vid.currentTime;
+        aud.play().catch(() => {});
+        setStatus('🔊 playing');
+        startDrift();
+    });
+
+    vid.addEventListener('pause', () => {
+        if (syncLock) return;
+        aud.pause();
+        setStatus('⏸ paused');
+        stopDrift();
+    });
+
+    vid.addEventListener('seeked', () => {
+        aud.currentTime = vid.currentTime;
+    });
+
+    vid.addEventListener('ratechange', () => {
+        aud.playbackRate = vid.playbackRate;
+    });
+
+    vid.addEventListener('ended', () => {
+        aud.pause();
+        aud.currentTime = 0;
+        setStatus('✅ done');
+        stopDrift();
+    });
+
+    vid.addEventListener('waiting', () => {
+        // Video buffering: freeze audio to stay in sync
+        aud.pause();
+        setStatus('⏳ buffering…');
+    });
+
+    vid.addEventListener('playing', () => {
+        // Video resumed from buffer
+        aud.currentTime = vid.currentTime;
+        aud.play().catch(() => {});
+        setStatus('🔊 playing');
+    });
+
+    // ── Drift correction every 2s ─────────────────────────────────
+    function startDrift() {
+        stopDrift();
+        driftTimer = setInterval(() => {
+            if (!vid.paused && Math.abs(aud.currentTime - vid.currentTime) > 0.35) {
+                aud.currentTime = vid.currentTime;
+            }
+        }, 2000);
+    }
+
+    function stopDrift() {
+        if (driftTimer) { clearInterval(driftTimer); driftTimer = null; }
+    }
+
+    // Preload audio so it's ready when video starts
+    aud.load();
 }
 </script>
 </body>
 </html>
+

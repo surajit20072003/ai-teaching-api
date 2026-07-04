@@ -1,0 +1,44 @@
+Generate a complete, executable Manim script for the following educational slide.
+
+**Slide Title**: {title}
+
+=== NARRATION SEGMENTS (sync your animations to EACH segment) ===
+{narration_segments}
+
+=== MATHEMATICAL CONTENT ===
+Formula / Math: {formula}
+Key Points: {key_points}
+Visual Description: {content}
+
+=== ANIMATION RULES (MANDATORY) ===
+1. Create one animation BLOCK per narration segment above
+2. Each block's (run_times + waits) MUST equal that segment's duration
+3. Every block ends with: self.play(FadeOut(*self.mobjects), run_time=0.5)
+4. Unique variable suffix per segment: _s1, _s2, _s3 ...
+5. No single self.wait() > 5.0 seconds — fill with Indicate(), Circumscribe(), animate.scale()
+6. ASCII text only — no unicode symbols
+7. Return PURE PYTHON CODE ONLY — no markdown, no explanations
+
+=== MANDATORY SKELETON ===
+from manim import *
+
+class SlideScene(Scene):
+    def construct(self):
+        # Segment 1: [name from narration] ({seg1_duration:.1f}s)
+        # ... animations matching segment 1 narration ...
+        self.play(FadeOut(*self.mobjects), run_time=0.5)
+
+        # Segment 2: [name from narration] ({seg2_duration:.1f}s)
+        # ... animations matching segment 2 narration ...
+        self.play(FadeOut(*self.mobjects), run_time=0.5)
+
+=== GENERATION CONSTRAINTS ===
+1. Class name MUST be exactly: SlideScene
+2. NEVER index MathTex: NO formula[0], formula[1], formula[2]
+3. NEVER use get_part_by_tex() — it returns None and crashes
+4. Use separate MathTex objects for each formula part to highlight
+5. Use Indicate(obj) or SurroundingRectangle(obj) to highlight formulas
+6. Every segment ends with: self.play(FadeOut(*self.mobjects), run_time=0.5)
+7. Unique variable names per segment: _s1, _s2, _s3 suffixes
+8. ASCII text only — no unicode symbols
+9. Return PURE PYTHON CODE ONLY — no markdown, no explanations

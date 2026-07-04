@@ -93,7 +93,49 @@ async def start_pregen(
     total_pending = int(pending or 0) + int(unsynced or 0)
 
     if total_pending == 0:
-        return {"message": "Nothing to pre-generate", "pending": 0, "subject_id": subject_id}
+        # Check if there are failed rows that need a retry pass
+        failed_count = (await db.execute(
+            text("""
+                SELECT COUNT(*) FROM teaching_qa_cache
+                WHERE subject_id = :subj
+                  AND pregen_status = 'failed'
+            """),
+            {"subj": subject_id},
+        )).scalar()
+
+        done_count = (await db.execute(
+            text("""
+                SELECT COUNT(*) FROM teaching_qa_cache
+                WHERE subject_id = :subj
+                  AND pregen_status = 'done'
+            """),
+            {"subj": subject_id},
+        )).scalar()
+
+        failed_count = int(failed_count or 0)
+        done_count   = int(done_count or 0)
+
+        if failed_count > 0:
+            return {
+                "status":  "has_failed",
+                "message": (
+                    f"{failed_count} row(s) failed and need a retry. "
+                    "Use POST /pregen/retry-failed to reset them, then start again."
+                ),
+                "pending": 0,
+                "failed":  failed_count,
+                "done":    done_count,
+                "subject_id": subject_id,
+                "hint": "POST /pregen/retry-failed",
+            }
+
+        return {
+            "status":     "all_done",
+            "message":    f"Subject fully complete \u2014 {done_count} row(s) done, nothing to do.",
+            "pending":    0,
+            "done":       done_count,
+            "subject_id": subject_id,
+        }
 
     # Kick off in background
     background_tasks.add_task(

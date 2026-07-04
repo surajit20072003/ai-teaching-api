@@ -8,8 +8,8 @@ OPENROUTER_BASE    = "https://openrouter.ai/api/v1/chat/completions"
 OPENROUTER_LLM     = "google/gemini-2.5-flash"          # real-time: fast cloud
 
 OLLAMA_URL         = os.getenv("OLLAMA_URL", "http://host.docker.internal:11434")
-OLLAMA_MODEL       = os.getenv("OLLAMA_MODEL", "llama3.2:3b")  # pre-gen: local GPU
-OLLAMA_TIMEOUT     = int(os.getenv("OLLAMA_TIMEOUT", "600"))   # 10 min — local models are slow
+OLLAMA_MODEL       = os.getenv("OLLAMA_MODEL", "qwen3-coder:latest")   # upgraded: stronger coding+reasoning model
+OLLAMA_TIMEOUT     = int(os.getenv("OLLAMA_TIMEOUT", "900"))             # 15 min — qwen3-coder is larger
 
 # ── Prompts ───────────────────────────────────────────────────────────────────
 _BASE_FORMAT = """
@@ -24,7 +24,8 @@ Reply ONLY with this exact JSON (no markdown fences, no extra text):
       "formula": "F = ma",
       "infographic": "Diagram showing ...",
       "isStory": false,
-      "isTips": false
+      "isTips": false,
+      "visual_type": "image"
     }}
   ],
   "latex_formulas": [{{"formula": "F=ma", "explanation": "Force equals mass times acceleration"}}],
@@ -47,6 +48,9 @@ SLIDE_PROMPT = (
     "7. Last slide MUST have isStory: true — a real-world analogy or story that makes the concept unforgettable.\n"
     "8. Second-to-last slide MUST have isTips: true — mnemonic tricks and memory aids.\n"
     "9. You MUST generate AT LEAST 5 slides. Aim for 6-7.\n"
+    "10. 'visual_type': use \"manim\" if the slide has a math formula, graph, derivation, or geometric diagram "
+    "    that benefits from animation. Use \"image\" for story/tips/concept slides without math.\n"
+    "    isStory and isTips slides MUST always have visual_type: \"image\".\n"
 ) + _BASE_FORMAT
 
 RAG_PROMPT = (
@@ -73,6 +77,8 @@ RAG_PROMPT = (
     "11. Second-to-last slide MUST have isTips: true — memory tricks for the document's key theorems/formulas.\n"
     "12. Add \"is_doc_grounded\": true to the JSON root.\n"
     "13. You MUST generate AT LEAST 5 slides. Aim for 6-7.\n"
+    "14. 'visual_type': use \"manim\" if the slide has a math formula, graph, derivation, or geometric diagram. "
+    "    Use \"image\" for story/tips/concept slides. isStory and isTips slides MUST have visual_type: \"image\".\n"
 ) + _BASE_FORMAT.replace(
     '"presentation_slides"',
     '"is_doc_grounded": true,\n  "presentation_slides"'
@@ -134,8 +140,70 @@ def _parse_slides(raw: str) -> dict:
     # Enforce minimum 5 slides
     if len(slides) < 5:
         logger.warning(f"[SlideGen] Only {len(slides)} slides generated — model produced too few. Check prompt/token limit.")
+
+    # ── Smart visual_type assignment ─────────────────────────────────────────
+    # Only slides with step-by-step derivations/proofs get Manim.
+    # Simple formula definitions or concept slides get image.
+    # Max 2 Manim slides per presentation (quality over quantity).
+    MANIM_TRIGGERS = {
+        "derive", "derivation", "proof", "prove",
+        "step by step", "step-by-step", "derive the",
+        "working out", "calculate step", "solve for",
+        "equations of motion", "integrate", "differentiate",
+        "show that", "substitute into", "eliminate",
+    }
+    MAX_MANIM_SLIDES = 2
+
+    def _should_be_manim(slide: dict) -> bool:
+        """Return True only for slides with real mathematical derivations."""
+        if slide.get("isStory") or slide.get("isTips"):
+            return False
+        combined = (
+            (slide.get("title", "") or "") + " " +
+            (slide.get("content", "") or "") + " " +
+            (slide.get("narration", "") or "")
+        ).lower()
+        return any(trigger in combined for trigger in MANIM_TRIGGERS)
+
+    # Pass 1: apply LLM decision but validate it
+    for slide in slides:
+        if slide.get("isStory") or slide.get("isTips"):
+            slide["visual_type"] = "image"
+            continue
+        if not slide.get("visual_type"):
+            slide["visual_type"] = "manim" if _should_be_manim(slide) else "image"
+        # Override: if LLM said manim but it's not a real derivation, downgrade
+        if slide.get("visual_type") == "manim" and not _should_be_manim(slide):
+            slide["visual_type"] = "image"
+
+    # Pass 2: cap total Manim slides at MAX_MANIM_SLIDES
+    # Prioritise slides that score highest (most trigger words)
+    manim_slides = [s for s in slides if s.get("visual_type") == "manim"]
+    if len(manim_slides) > MAX_MANIM_SLIDES:
+        def _score(slide: dict) -> int:
+            combined = (
+                (slide.get("title", "") or "") + " " +
+                (slide.get("narration", "") or "")
+            ).lower()
+            return sum(1 for t in MANIM_TRIGGERS if t in combined)
+        manim_slides.sort(key=_score, reverse=True)
+        # Keep top MAX_MANIM_SLIDES, downgrade the rest
+        to_downgrade = manim_slides[MAX_MANIM_SLIDES:]
+        downgrade_ids = {id(s) for s in to_downgrade}
+        for slide in slides:
+            if id(slide) in downgrade_ids:
+                slide["visual_type"] = "image"
+        logger.info(
+            f"[SlideGen] Capped Manim slides: {len(manim_slides)} → {MAX_MANIM_SLIDES} "
+            f"(downgraded {len(to_downgrade)} slides to image)"
+        )
+
+    n_manim = sum(1 for s in slides if s.get("visual_type") == "manim")
+    logger.info(f"[SlideGen] visual_type summary: manim={n_manim}, image={len(slides)-n_manim}")
+
     data["presentation_slides"] = slides
     return data
+
 
 
 # ── Ollama client ─────────────────────────────────────────────────────────────
@@ -147,11 +215,12 @@ async def _generate_via_ollama(prompt: str) -> str:
     """
     url = f"{OLLAMA_URL}/api/chat"
     payload = {
-        "model":   OLLAMA_MODEL,
-        "stream":  False,
-        "format":  "json",                                    # Forces Ollama to output valid JSON always
-        "messages": [{"role": "user", "content": prompt}],
-        "options": {"temperature": 0.7, "num_predict": 8000},  # 8000 tokens → richer 220+ word narrations
+        "model":      OLLAMA_MODEL,
+        "stream":     False,
+        "format":     "json",                                    # Forces Ollama to output valid JSON always
+        "messages":   [{"role": "user", "content": prompt}],
+        "keep_alive": -1,                                        # Never auto-unload during long generation
+        "options":    {"temperature": 0.7, "num_predict": 8000},  # 8000 tokens → richer 220+ word narrations
     }
     logger.info(f"[SlideGen/Ollama] POST {url} model={OLLAMA_MODEL} timeout={OLLAMA_TIMEOUT}s")
     async with httpx.AsyncClient(timeout=OLLAMA_TIMEOUT) as client:

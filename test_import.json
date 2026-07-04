@@ -1,0 +1,80 @@
+{
+  "subject": {
+    "id": "e41572db-085d-4dfc-ba75-478c8222e2c6",
+    "name": "Social Science",
+    "slug": "social-science"
+  },
+  "chapter": {
+    "id": "c9523153-d111-4c58-a813-fa94398ad61b",
+    "chapter_number": 1,
+    "title": "The French Revolution"
+  },
+  "topic": {
+    "id": "7d1aa0ad-63ce-41f2-89d9-c35ddc1a4de9",
+    "topic_number": "1.1",
+    "title": "French Society During the Late Eighteenth Century"
+  },
+  "document": {
+    "id": "7c7c7d7f-9eec-4322-8304-961ee719208a",
+    "display_name": "CHAPTER - 1 The French Revolution.docx",
+    "source_type": "docx",
+    "source_url": null,
+    "status": "completed",
+    "created_at": "2026-02-12T02:38:24.274312+00:00",
+    "parsed_json": {
+      "images": {},
+      "status": "complete",
+      "success": true,
+      "metadata": {
+        "pages": 5,
+        "ocr_stats": null
+      },
+      "request_id": "VKRgZchXNnvABRwVqHwWmZ",
+      "content_json": null,
+      "uploaded_images": [],
+      "content_markdown": "## 1.1 French Society During the Late Eighteenth Century\n\nIn 1774, Louis XVI of the Bourbon family of kings ascended the throne of France. He was 20 years old and married to the Austrian princess Marie Antoinette. Upon his accession the new king found an empty treasury. Long years of war had drained the financial resources of France. Added to this was the cost of maintaining an extravagant court at the immense palace of Versailles. Under Louis XVI, France helped the thirteen American colonies to gain their independence from the common enemy, Britain. The war added more than a billion livres to a debt that had already risen to more than 2 billion livres."
+    }
+  },
+  "questions": [
+    {
+      "id": "1a88d833-bf0e-4c8c-9010-f79c522bc31a",
+      "question_text": "Who ascended the throne of France in 1774?\n\n- A) Louis XIV\n  - B) Louis XV\n  - C) Louis XVI\n  - D) Marie Antoinette",
+      "question_type": "subjective",
+      "question_format": "subjective",
+      "options": {
+        "A": {
+          "text": "Louis XIV"
+        },
+        "B": {
+          "text": "Louis XV"
+        },
+        "C": {
+          "text": "Louis XVI"
+        },
+        "D": {
+          "text": "Marie Antoinette"
+        }
+      },
+      "option_images": {},
+      "question_image_url": null,
+      "correct_answer": "C",
+      "explanation": "In 1774, Louis XVI of the Bourbon family of kings ascended the throne of France.",
+      "difficulty": "Easy",
+      "marks": 4,
+      "is_verified": false,
+      "is_ai_generated": true,
+      "created_at": "2026-02-16T06:29:07.082006+00:00",
+      "source": {
+        "subject_id": "e41572db-085d-4dfc-ba75-478c8222e2c6",
+        "chapter_id": "c9523153-d111-4c58-a813-fa94398ad61b",
+        "topic_id": "7d1aa0ad-63ce-41f2-89d9-c35ddc1a4de9",
+        "subtopic_id": null,
+        "source_document_id": "31b65368-50e2-4f83-aaf6-084ab1be5893",
+        "source_document_purpose": "general"
+      }
+    }
+  ],
+  "counts": {
+    "questions": 1
+  }
+}

@@ -442,6 +442,8 @@ async def teaching_assistant(body: dict, db: AsyncSession = Depends(get_db)):
             "latexFormulas": row.latex_formulas,
             "slideAudioUrls": row.slide_audio_urls.get("urls", []) if row.slide_audio_urls else [],
             "totalDurationSeconds": row.total_duration_seconds,
+            "manimVideoUrls": row.manim_video_urls or {},
+            "imageUrls": row.image_urls or {},
         }
         await set_to_cache(q_hash, subject_id, data)
         await write_slide_cache(subject_id, q_hash, data)
@@ -458,6 +460,7 @@ async def teaching_assistant(body: dict, db: AsyncSession = Depends(get_db)):
         sem_sql = text("""
             SELECT id, question_text, presentation_slides, latex_formulas,
                    slide_audio_urls, total_duration_seconds,
+                   manim_video_urls, image_urls,
                    1 - (question_embedding <=> CAST(:vec AS vector)) AS sim_score
             FROM teaching_qa_cache
             WHERE question_embedding IS NOT NULL
@@ -483,6 +486,8 @@ async def teaching_assistant(body: dict, db: AsyncSession = Depends(get_db)):
                         "latexFormulas": r.latex_formulas,
                         "slideAudioUrls": r.slide_audio_urls.get("urls", []) if r.slide_audio_urls else [],
                         "totalDurationSeconds": r.total_duration_seconds,
+                        "manimVideoUrls": (r.manim_video_urls or {}) if hasattr(r, "manim_video_urls") else {},
+                        "imageUrls": (r.image_urls or {}) if hasattr(r, "image_urls") else {},
                     }
                 }
                 for r in rows
@@ -618,6 +623,8 @@ async def teaching_assistant(body: dict, db: AsyncSession = Depends(get_db)):
         "followUpQuestions": slides_data.get("follow_up_questions", []),
         "slideAudioUrls": audios,
         "totalDurationSeconds": total_duration,
+        "manimVideoUrls": {},   # empty for real-time; pre-gen fills this via pregen pipeline
+        "imageUrls": {},
     }
 
     # Warm L1 + L2 caches

@@ -24,6 +24,7 @@ import os
 import time
 import uuid
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import httpx
@@ -36,6 +37,135 @@ from core.embeddings import embed_async, vec_to_pg_str
 from core.tts_utils import prepare_for_tts
 from core.local_storage import write_image, write_audio, write_slide_cache
 from core.cache import delete_from_cache
+from core.ollama_lifecycle import (
+    prepare_for_text_generation,
+    prepare_for_media_generation,
+    prepare_for_manim_generation,
+)
+from core.manim_generator import generate_and_render_slide_manim
+
+# ── Prompt file loader ─────────────────────────────────────────────────────────
+_PROMPT_DIR = Path(__file__).parent / "prompts"
+
+def _load_prompt_file(filename: str) -> str:
+    """Load a prompt from core/prompts/ — no Docker restart needed to update."""
+    try:
+        return (_PROMPT_DIR / filename).read_text(encoding="utf-8")
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(f"[Pregen] Could not load {filename}: {e}")
+        return ""
+
+
+def _build_image_prompt(slide: dict) -> str:
+    """
+    Build a rich, context-aware Wan2GP image prompt based on slide type.
+    Uses the image_system_prompt.txt as a style guide to pick the correct
+    visual style, then constructs a detailed prompt from slide fields.
+    """
+    title       = slide.get("title", "Concept")
+    content     = slide.get("infographic") or slide.get("content") or ""
+    key_points  = slide.get("keyPoints") or []
+    formula     = slide.get("formula", "") or ""
+    visual_type = slide.get("visual_type", "") or ""
+    is_story    = slide.get("isStory", False)
+    is_tips     = slide.get("isTips", False)
+    kp_str      = ", ".join(key_points[:4]) if key_points else ""
+    title_lower = title.lower()
+
+    # ── Pick style based on slide type ────────────────────────────────────────
+    if is_story:
+        style = (
+            "warm illustrated story scene, storybook art style, soft warm lighting, "
+            "narrative illustration with characters, Indian cultural context if suitable, "
+            "hand-drawn watercolor feel, educational storytelling visual"
+        )
+        composition = "characters centered, scene background fills frame, warm color palette"
+        bg = "warm cream background"
+
+    elif is_tips:
+        style = (
+            "bright educational infographic, lightbulb and brain icons, "
+            "mnemonic memory aid layout, bold yellow and blue accents, "
+            "numbered memory trick visual, clean icon-based design"
+        )
+        composition = "numbered points arranged vertically, icons on left, text on right"
+        bg = "clean white background with yellow accent strip"
+
+    elif visual_type == "manim" or formula:
+        style = (
+            "clean academic dark background #1a1a2e, glowing white LaTeX equation on dark surface, "
+            "chalkboard or paper texture with formula, colored highlights on key variables (yellow, teal), "
+            "professional mathematical illustration, deep blue and gold accents, "
+            "classroom-ready formula visualization"
+        )
+        composition = "formula large and centered, variable labels beside with arrows, dark academic feel"
+        bg = "dark navy #1a1a2e background"
+
+    elif any(w in title_lower for w in ["cell", "organ", "dna", "molecule", "anatomy", "biology",
+                                         "physiology", "tissue", "membrane", "protein", "nerve"]):
+        style = (
+            "detailed scientific illustration, cross-section biological diagram, "
+            "labeled anatomical parts with arrows, textbook medical style, "
+            "semi-transparent layers showing internal structure, "
+            "teal and rose color palette, white annotation labels"
+        )
+        composition = "cross-section or diagram centered, labeled parts with leader lines"
+        bg = "clean white scientific background"
+
+    elif any(w in title_lower for w in ["how", "step", "process", "stage", "phase", "cycle", "pathway"]):
+        style = (
+            "numbered step flowchart infographic, connected boxes with arrows showing direction, "
+            "timeline or process layout, blue boxes white text, professional process diagram, "
+            "clear sequential flow visualization"
+        )
+        composition = "steps arranged left-to-right or top-to-bottom, arrows between each step"
+        bg = "clean white background"
+
+    elif any(w in title_lower for w in ["summary", "recap", "review", "conclusion", "overview"]):
+        style = (
+            "mind map layout infographic, central topic in circle, radiating branches with icons, "
+            "color-coded concept branches, clean professional hierarchy, "
+            "educational summary visual"
+        )
+        composition = "central node in middle, branches radiating outward, clean white background"
+        bg = "clean white background"
+
+    elif any(w in title_lower for w in ["what is", "definition", "meaning", "introduction", "concept"]):
+        style = (
+            "flat design educational infographic, labeled diagram with arrows, "
+            "blue and orange color palette, icon-based layout, "
+            "textbook-style conceptual illustration, clear hierarchy"
+        )
+        composition = "concept label at top, main visual center, key points listed on sides"
+        bg = "clean white background"
+
+    else:
+        style = (
+            "educational diagram, textbook illustration, labeled arrows, "
+            "clear section boxes, blue and white color scheme, "
+            "professional academic infographic"
+        )
+        composition = "title at top, main visual center, key labels at sides"
+        bg = "clean white background"
+
+    # ── Build the prompt ──────────────────────────────────────────────────────
+    formula_part = f" Mathematical formula shown: {formula}." if formula else ""
+    kp_part      = f" Key concepts: {kp_str}." if kp_str else ""
+
+    prompt = (
+        f"{style}. "
+        f"Topic: {title}. "
+        f"{content[:200] if content else ''}{formula_part}{kp_part} "
+        f"Composition: {composition}. "
+        f"Background: {bg}. "
+        f"high quality, sharp focus, 4K resolution, detailed, "
+        f"professional educational illustration, suitable for classroom projection, "
+        f"no watermarks, no text artifacts, crisp edges, well-balanced composition. "
+        f"Avoid: blurry, low quality, pixelated, ugly, distorted, watermark, "
+        f"dark muddy colors, overexposed, cluttered layout, overlapping elements."
+    )
+    return prompt
 
 # ── Environment ────────────────────────────────────────────────────────────────
 VOXCPM_URL     = os.getenv("VOXCPM_URL",    "http://host.docker.internal:7861")
@@ -54,7 +184,8 @@ class PregenState:
     done:            int   = 0
     failed:          int   = 0
     current_question: str  = ""
-    current_step:    str   = ""      # "ollama" | "image:N" | "audio:N" | "saving"
+    current_step:    str   = ""      # "ollama" | "image:N" | "audio:N" | "manim:N" | "saving"
+    phase:           str   = ""      # "text" | "evicting" | "media" | "loading" | "manim" | "saving"
     started_at:      float = 0.0
     last_error:      str   = ""
     log:             List[str] = field(default_factory=list)
@@ -284,41 +415,10 @@ async def _process_slide(idx: int, slide: dict, cache_id: str, language: str, su
     is_story       = slide.get("isStory", False)
     is_tips        = slide.get("isTips", False)
 
-    # ── Build a rich, detailed image prompt ──────────────────────────────────
-    # Flux/SDXL models need long, structured prompts for quality results.
-    # A 3-sentence prompt → generic blurry output.
-    # A detailed, layered prompt → sharp, educational, on-topic image.
-
-    kp_str = ", ".join(key_points[:3]) if key_points else ""
-
-    if is_story:
-        style_hint = (
-            "warm illustrated story scene, narrative art, soft warm colors, "
-            "storybook illustration style, characters interacting with concept"
-        )
-    elif is_tips:
-        style_hint = (
-            "memory tips infographic, lightbulb icons, numbered list visual, "
-            "bright yellow and blue palette, clean icon-based layout"
-        )
-    else:
-        style_hint = (
-            "educational diagram, textbook illustration, labeled arrows, "
-            "clear section boxes, blue and white color scheme"
-        )
-
-    img_prompt = (
-        f"Educational infographic poster: \"{slide_title}\". "
-        f"Topic: {slide_content[:120]}. "
-        f"{'Key concepts shown: ' + kp_str + '. ' if kp_str else ''}"
-        f"Style: {style_hint}. "
-        f"Visual design: clean layout, high contrast text labels, white background, "
-        f"professional academic look, crisp lines, no clutter, no watermarks. "
-        f"Composition: title at top, main visual in center, key labels on sides. "
-        f"Quality: sharp, detailed, 4K resolution, photorealistic where appropriate, "
-        f"suitable for classroom projection. "
-        f"Negative: blurry, low quality, pixelated, messy, overlapping text, dark background."
-    )
+    # ── Build a rich, context-aware image prompt from slide type ─────────────
+    # Uses _build_image_prompt() which picks style based on slide type
+    # (formula/biology/process/story/tips/summary/concept/default).
+    img_prompt = _build_image_prompt(slide)
 
     narration = slide.get("narration") or slide.get("content") or ""
 
@@ -362,6 +462,7 @@ async def _process_slide(idx: int, slide: dict, cache_id: str, language: str, su
                 if subject_id:
                     try:
                         local_path = await write_image(subject_id, cache_id, idx, img_result)
+                        slide["infographicLocalPath"] = local_path   # persist for future use
                         _log(f"[Pregen] slide {idx+1}: image ✓ local → {local_path}")
                     except Exception as e:
                         _log(f"[Pregen] slide {idx+1}: image local write failed (non-fatal) — {e}")
@@ -381,6 +482,7 @@ async def _process_slide(idx: int, slide: dict, cache_id: str, language: str, su
                 if subject_id:
                     try:
                         local_path = await write_audio(subject_id, cache_id, language, idx, wav_result)
+                        slide["audioLocalPath"] = local_path   # persist for future use
                         _log(f"[Pregen] slide {idx+1}: audio ✓ local → {local_path}")
                     except Exception as e:
                         _log(f"[Pregen] slide {idx+1}: audio local write failed (non-fatal) — {e}")
@@ -402,6 +504,266 @@ async def _process_slide(idx: int, slide: dict, cache_id: str, language: str, su
 
     duration = slide.get("duration", 0.0)
     return slide, duration
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Phase helpers — called by run_pregen_batch's 3-phase loop
+# ─────────────────────────────────────────────────────────────────────────────
+
+async def _pregen_text_only(
+    row: Dict[str, Any],
+    db: AsyncSession,
+    subject_name: str = "",
+) -> Dict[str, Any]:
+    """
+    Phase A: generate slides via Ollama (or skip if slides already in DB).
+    Returns the row dict updated with 'presentation_slides'.
+    Raises on failure — caller marks row as 'failed'.
+
+    subject_name: human-readable display name for the LLM prompt (optional).
+    The UUID in row['subject_id'] is NEVER overwritten here.
+    """
+    cache_id = str(row["id"])
+    question = row.get("question_text") or ""
+    doc_id   = row.get("document_id")
+    # Use display name for LLM prompt; fall back to UUID if name not provided
+    subject_for_prompt = subject_name or row.get("subject_id") or "General"
+    slides   = row.get("presentation_slides") or []
+
+    if slides:
+        _log(f"[Pregen-A] {cache_id[:8]}: slides already in DB ({len(slides)}) — skipping Ollama")
+        return row
+
+    _log(f"[Pregen-A] Ollama → generating slides for: {question[:80]}")
+
+    # Fetch RAG context if doc-linked
+    context = ""
+    if doc_id:
+        r = await db.execute(
+            text("""
+                SELECT chunk_text FROM document_chunks
+                WHERE document_id = CAST(:doc_id AS uuid)
+                ORDER BY chunk_index LIMIT 8
+            """),
+            {"doc_id": str(doc_id)},
+        )
+        context = "\n\n".join(r.scalars().all())
+
+    slide_data = await generate_slides(
+        question  = question,
+        subject   = subject_for_prompt,   # display name for prompt quality
+        context   = context,
+        use_local = True,
+    )
+    slides = slide_data.get("presentation_slides", [])
+    if not slides:
+        raise ValueError("Ollama returned 0 slides")
+
+    _log(f"[Pregen-A] ✓ {len(slides)} slides — saving to DB")
+    await db.execute(
+        text("""
+            UPDATE teaching_qa_cache
+            SET presentation_slides = CAST(:slides AS jsonb)
+            WHERE id = CAST(:id AS uuid)
+        """),
+        {"slides": json.dumps(slides), "id": cache_id},
+    )
+    await db.commit()
+
+    row = dict(row)
+    row["presentation_slides"] = slides
+    return row
+
+
+async def _pregen_media_only(
+    row: Dict[str, Any],
+    slides: list,
+) -> tuple:
+    """
+    Phase B: generate images + audio for every slide in parallel.
+    Returns (enriched_slides, audio_url_list, total_duration, audio_durations, image_urls_map).
+    Ollama MUST be evicted before calling this.
+    """
+    cache_id = str(row["id"])
+    language = row.get("language") or "en-IN"
+    subject  = row.get("subject_id") or "General"
+
+    _log(f"[Pregen-B] {cache_id[:8]}: launching image+audio for {len(slides)} slides...")
+
+    slide_results = await asyncio.gather(
+        *[_process_slide(idx, slide, cache_id, language, subject)
+          for idx, slide in enumerate(slides)],
+        return_exceptions=True,
+    )
+
+    enriched_slides  = list(slides)  # copy
+    audio_url_list:  list  = []
+    audio_durations: dict  = {}
+    image_urls_map:  dict  = {}
+    total_duration   = 0.0
+
+    for idx, result in enumerate(slide_results):
+        if isinstance(result, Exception):
+            _log(f"[Pregen-B] {cache_id[:8]} slide {idx+1}: _process_slide error — {result}")
+            continue
+        enriched_slide, duration = result
+        enriched_slides[idx] = enriched_slide
+        total_duration += duration
+        if duration > 0:
+            audio_durations[idx] = duration
+        if enriched_slide.get("audioUrl"):
+            audio_url_list.append({
+                "slideIndex": idx,
+                "audioUrl":   enriched_slide["audioUrl"],
+                "duration":   duration,
+            })
+        if enriched_slide.get("infographicUrl"):
+            image_urls_map[str(idx)] = {"url": enriched_slide["infographicUrl"]}
+
+    return enriched_slides, audio_url_list, total_duration, audio_durations, image_urls_map
+
+
+async def _pregen_manim_only(
+    row: Dict[str, Any],
+    slides: list,
+    audio_durations: dict,
+) -> dict:
+    """
+    Phase C: generate Manim videos for slides with visual_type='manim'.
+    Returns manim_video_urls dict {slide_idx_str: {url, local_mp4, duration_seconds}}.
+    Ollama MUST be loaded before calling this.
+    """
+    cache_id = str(row["id"])
+    subject  = row.get("subject_id") or "General"
+
+    manim_slides = [
+        (idx, slides[idx])
+        for idx in range(len(slides))
+        if slides[idx].get("visual_type") == "manim" and idx in audio_durations
+    ]
+    if not manim_slides:
+        return {}
+
+    _log(f"[Pregen-C] {cache_id[:8]}: Manim for {len(manim_slides)} formula slides...")
+    manim_video_urls: dict = {}
+
+    for idx, slide in manim_slides:
+        try:
+            result = await generate_and_render_slide_manim(
+                slide          = slide,
+                slide_index    = idx,
+                cache_id       = cache_id,
+                subject_id     = subject,
+                audio_duration = audio_durations[idx],
+            )
+            if result:
+                local_mp4 = result.get("local_mp4") or ""
+                b2_url    = result.get("b2_url") or ""
+                # Upload to B2 if not already uploaded
+                if local_mp4 and not b2_url:
+                    try:
+                        with open(local_mp4, "rb") as f:
+                            mp4_bytes = f.read()
+                        b2_path = f"ai-teaching/{cache_id}/manim_{idx}.mp4"
+                        b2_url  = await upload_to_b2(mp4_bytes, b2_path, "video/mp4")
+                        _log(f"[Pregen-C] {cache_id[:8]} slide {idx+1}: Manim B2 → {b2_url}")
+                    except Exception as _ue:
+                        _log(f"[Pregen-C] {cache_id[:8]} slide {idx+1}: Manim B2 upload failed — {_ue}")
+                manim_video_urls[str(idx)] = {
+                    "url":              b2_url,
+                    "local_mp4":        local_mp4,
+                    "duration_seconds": result.get("duration_seconds", 0.0),
+                }
+                _log(f"[Pregen-C] {cache_id[:8]} slide {idx+1}: Manim ✓")
+            else:
+                _log(f"[Pregen-C] {cache_id[:8]} slide {idx+1}: Manim failed — keeping static image")
+        except Exception as e:
+            _log(f"[Pregen-C] {cache_id[:8]} slide {idx+1}: Manim exception (non-fatal): {e}")
+
+    return manim_video_urls
+
+
+async def _save_row_result(
+    db:               AsyncSession,
+    row:              Dict[str, Any],
+    slides:           list,
+    audio_url_list:   list,
+    total_duration:   float,
+    manim_video_urls: dict,
+    image_urls_map:   dict,
+) -> None:
+    """
+    Save final results to DB and mark row as 'done'.
+    Also writes the local slide-cache JSON file.
+
+    Design: embedding is DECOUPLED from the core save.
+    Step 1 always commits slides/audio/status='done'.
+    Step 2 stores the embedding as a best-effort update.
+    This guarantees a row is never stuck as 'failed' due to an embedding crash.
+    """
+    cache_id = str(row["id"])
+    question = row.get("question_text") or ""
+    language = row.get("language") or "en-IN"
+    subject  = row.get("subject_id") or "General"  # always UUID (never display name)
+    q_hash   = row.get("question_hash") or ""
+
+    # ── Step 1: Core save — slides, audio URLs, status='done' ─────────────────
+    # This MUST succeed before anything else.  No embedding here.
+    await db.execute(
+        text("""
+            UPDATE teaching_qa_cache
+            SET presentation_slides    = CAST(:slides AS jsonb),
+                slide_audio_urls       = CAST(:audio  AS jsonb),
+                total_duration_seconds = :dur,
+                manim_video_urls       = CAST(:manim AS jsonb),
+                image_urls             = CAST(:imgs  AS jsonb),
+                pregen_status          = 'done',
+                pregen_completed_at    = NOW()
+            WHERE id = CAST(:id AS uuid)
+        """),
+        {
+            "slides": json.dumps(slides),
+            "audio":  json.dumps({"language": language, "urls": audio_url_list}),
+            "dur":    total_duration,
+            "manim":  json.dumps(manim_video_urls),
+            "imgs":   json.dumps(image_urls_map),
+            "id":     cache_id,
+        },
+    )
+    await db.commit()
+    _log(f"[Pregen] ✓ Saved: {cache_id[:8]} — pregen_status=done, "
+         f"{len(slides)} slides, {round(total_duration)}s audio")
+
+    # ── Step 2: Embedding — best-effort, never blocks save ────────────────────
+    try:
+        q_vec   = await embed_async(question)
+        vec_str = vec_to_pg_str(q_vec)
+        await db.execute(
+            text("""
+                UPDATE teaching_qa_cache
+                SET question_embedding = CAST(:vec AS vector)
+                WHERE id = CAST(:id AS uuid)
+            """),
+            {"vec": vec_str, "id": cache_id},
+        )
+        await db.commit()
+        _log(f"[Pregen] ✓ Embedding stored: {cache_id[:8]}")
+    except Exception as e:
+        _log(f"[Pregen] Embedding failed (non-fatal — run backfill_embeddings.py later): {e}")
+
+    # ── Step 3: Write local slide cache JSON ──────────────────────────────────
+    if q_hash and subject:
+        try:
+            await write_slide_cache(subject, q_hash, {
+                "cache_id":             cache_id,
+                "presentationSlides":   slides,
+                "slideAudioUrls":       {"language": language, "urls": audio_url_list},
+                "totalDurationSeconds": total_duration,
+                "manimVideoUrls":       manim_video_urls,
+                "imageUrls":            image_urls_map,
+            })
+        except Exception as e:
+            _log(f"[Pregen] local cache write failed (non-fatal): {e}")
 
 
 async def _pregen_one(row: Dict[str, Any], db: AsyncSession) -> None:
@@ -468,8 +830,10 @@ async def _pregen_one(row: Dict[str, Any], db: AsyncSession) -> None:
         _log(f"[Pregen] Step 1: Slides already exist ({len(slides)} slides) — skipping Ollama")
 
     # ── Steps 2a+2b: ALL slides image+audio IN PARALLEL ─────────────────────
+    # Note: Ollama VRAM already evicted before this batch loop starts (Phase 2).
+    # Wan2GP + VoxCPM now have full GPU VRAM available.
     _state.current_step = "parallel_media"
-    _log(f"[Pregen] Step 2: Launching image+audio for all {len(slides)} slides in parallel...")
+    _log(f"[Pregen] Step 2a+2b: Launching image+audio for all {len(slides)} slides in parallel...")
 
     slide_results = await asyncio.gather(
         *[_process_slide(idx, slide, cache_id, language, subject) for idx, slide in enumerate(slides)],
@@ -490,26 +854,102 @@ async def _pregen_one(row: Dict[str, Any], db: AsyncSession) -> None:
             audio_url_list.append({
                 "slideIndex": idx,
                 "audioUrl":   enriched_slide["audioUrl"],
+                "localPath":  enriched_slide.get("audioLocalPath", ""),
                 "duration":   duration,
             })
 
-    _log(f"[Pregen] Step 2: all slides done — total audio {round(total_duration, 1)}s")
+    _log(f"[Pregen] Step 2a+2b: all slides done — total audio {round(total_duration, 1)}s")
+
+    # ── Phase 4 gate: re-load Ollama before Manim code generation ────────────
+    manim_slides_needed = any(
+        slides[i].get("visual_type") == "manim" for i in range(len(slides))
+    )
+    if manim_slides_needed:
+        _state.current_step = "loading_ollama"
+        _log("[Pregen] Phase 4: re-loading Ollama for Manim code generation...")
+        try:
+            ready = await prepare_for_manim_generation()
+            if ready:
+                _log("[Pregen] Phase 4: Ollama model loaded ✓")
+            else:
+                _log("[Pregen] Phase 4: Ollama load timed out — Manim will be skipped")
+        except Exception as e:
+            _log(f"[Pregen] Phase 4 load failed (non-fatal): {e}")
+            ready = False
+
+    # ── Step 2c: Manim generation for formula slides ─────────────────────────
+    # audio_durations collected from slide_results above; used for timing sync
+    manim_video_urls: dict = {}  # {"slide_idx_str": {url, local_mp4, duration_seconds}}
+    image_urls_map: dict = {}    # {"slide_idx_str": {url}}
+
+    # Build per-slide audio duration map from results
+    audio_durations: dict = {}
+    for idx, result in enumerate(slide_results):
+        if not isinstance(result, Exception):
+            enriched_slide, duration = result
+            if duration > 0:
+                audio_durations[idx] = duration
+            if enriched_slide.get("infographicUrl"):
+                image_urls_map[str(idx)] = {
+                    "url":       enriched_slide["infographicUrl"],
+                    "localPath": enriched_slide.get("infographicLocalPath", ""),
+                }
+
+    # Manim phase: generate for slides flagged visual_type="manim"
+    manim_slides = [
+        (idx, slides[idx])
+        for idx in range(len(slides))
+        if slides[idx].get("visual_type") == "manim" and idx in audio_durations
+    ]
+    if manim_slides:
+        _log(f"[Pregen] Step 2c: Manim for {len(manim_slides)} formula slides...")
+        for idx, slide in manim_slides:
+            _state.current_step = f"manim:{idx+1}"
+            try:
+                result = await generate_and_render_slide_manim(
+                    slide=slide,
+                    slide_index=idx,
+                    cache_id=cache_id,
+                    subject_id=subject,
+                    audio_duration=audio_durations[idx],
+                )
+                if result:
+                    local_mp4 = result.get("local_mp4") or ""
+                    b2_url    = result.get("b2_url") or ""
+                    # Upload to B2 if not already uploaded
+                    if local_mp4 and not b2_url:
+                        try:
+                            with open(local_mp4, "rb") as f:
+                                mp4_bytes = f.read()
+                            b2_path = f"ai-teaching/{cache_id}/manim_{idx}.mp4"
+                            b2_url  = await upload_to_b2(mp4_bytes, b2_path, "video/mp4")
+                            _log(f"[Pregen] slide {idx+1}: Manim B2 → {b2_url}")
+                        except Exception as _ue:
+                            _log(f"[Pregen] slide {idx+1}: Manim B2 upload failed — {_ue}")
+                    manim_video_urls[str(idx)] = {
+                        "url":              b2_url,
+                        "local_mp4":        local_mp4,
+                        "duration_seconds": result.get("duration_seconds", 0.0),
+                    }
+                    _log(f"[Pregen] slide {idx+1}: Manim ✓")
+                else:
+                    _log(f"[Pregen] slide {idx+1}: Manim failed — keeping static image")
+            except Exception as e:
+                _log(f"[Pregen] slide {idx+1}: Manim exception (non-fatal): {e}")
 
     # ── Step 3: Save all results → mark done ─────────────────────────────────
     _state.current_step = "saving"
     _log(f"[Pregen] Step 3: Saving results to DB...")
 
-    # Calculate embedding for the L4 Semantic Cache
-    q_vec = await embed_async(question)
-    vec_str = vec_to_pg_str(q_vec)
-
+    # Step 3a: Core save — slides/audio/status='done' (always runs)
     await db.execute(
         text("""
             UPDATE teaching_qa_cache
             SET presentation_slides    = CAST(:slides AS jsonb),
                 slide_audio_urls       = CAST(:audio AS jsonb),
                 total_duration_seconds = :dur,
-                question_embedding     = CAST(:vec AS vector),
+                manim_video_urls       = CAST(:manim AS jsonb),
+                image_urls             = CAST(:imgs  AS jsonb),
                 pregen_status          = 'done',
                 pregen_completed_at    = NOW()
             WHERE id = CAST(:id AS uuid)
@@ -518,14 +958,32 @@ async def _pregen_one(row: Dict[str, Any], db: AsyncSession) -> None:
             "slides": json.dumps(slides),
             "audio":  json.dumps({"language": language, "urls": audio_url_list}),
             "dur":    total_duration,
-            "vec":    vec_str,
+            "manim":  json.dumps(manim_video_urls),
+            "imgs":   json.dumps(image_urls_map),
             "id":     cache_id,
         },
     )
     await db.commit()
-    _log(f"[Pregen] ✓ Done: {question[:60]} — {len(slides)} slides, {round(total_duration)}s audio")
+    _log(f"[Pregen] ✓ Done: {question[:60]} — {len(slides)} slides, {round(total_duration)}s audio, {len(manim_video_urls)} manim")
 
-    # ── Save presentation JSON to local /sdb-disk (same as real-time does) ────────
+    # Step 3b: Embedding — best-effort, never blocks status='done'
+    try:
+        q_vec   = await embed_async(question)
+        vec_str = vec_to_pg_str(q_vec)
+        await db.execute(
+            text("""
+                UPDATE teaching_qa_cache
+                SET question_embedding = CAST(:vec AS vector)
+                WHERE id = CAST(:id AS uuid)
+            """),
+            {"vec": vec_str, "id": cache_id},
+        )
+        await db.commit()
+        _log(f"[Pregen] ✓ Embedding stored: {cache_id[:8]}")
+    except Exception as e:
+        _log(f"[Pregen] Embedding failed (non-fatal — run backfill_embeddings.py later): {e}")
+
+    # Step 3c: Write local slide cache JSON
     q_hash = row.get("question_hash") or ""
     if q_hash and subject:
         slide_cache_data = {
@@ -533,6 +991,8 @@ async def _pregen_one(row: Dict[str, Any], db: AsyncSession) -> None:
             "presentationSlides":  slides,
             "slideAudioUrls":      {"language": language, "urls": audio_url_list},
             "totalDurationSeconds": total_duration,
+            "manimVideoUrls":      manim_video_urls,
+            "imageUrls":           image_urls_map,
         }
         try:
             await write_slide_cache(subject, q_hash, slide_cache_data)
@@ -568,8 +1028,19 @@ async def run_pregen_batch(
         stop_requested = False,
         subject_id     = subject_id,
         started_at     = time.time(),
+        phase          = "text",
     )
     _log(f"[Pregen] ══ Batch started: subject={subject_id} topic={topic_id} chapter={chapter_id} limit={limit} ══")
+
+    # ── Phase 1 gate: ensure Ollama model is loaded before text generation ────
+    _state.phase = "text"
+    _log("[Pregen] Phase 1: ensuring Ollama model is in VRAM...")
+    try:
+        model_ready = await prepare_for_text_generation()
+        if not model_ready:
+            _log("[Pregen] ⚠ Ollama model did not load — proceeding anyway (may fail per-row)")
+    except Exception as e:
+        _log(f"[Pregen] Ollama model load check failed (non-fatal): {e}")
 
     try:
         from core.cache import hash_question
@@ -656,17 +1127,26 @@ async def run_pregen_batch(
             )).scalar()
             _state.total = int(total_pending or 0)
 
-        _log(f"[Pregen] {_state.total} rows pending — starting processing loop")
+        _log(f"[Pregen] {_state.total} rows pending — starting 3-phase batch")
 
-        # ── Step 4: Single processing loop ────────────────────────────────────
-        processed = 0
-        while not _state.stop_requested and processed < limit:
-            # Always fetch the next pending row fresh (no offset — status changes as we go)
+        # ════════════════════════════════════════════════════════════════════
+        # PHASE A — Text generation (Ollama loaded, no media models)
+        #   Generate slides for EVERY pending row before touching any GPU media.
+        #   Ollama is already loaded from Phase 1 above.
+        # ════════════════════════════════════════════════════════════════════
+        _state.phase = "text"
+        _log("[Pregen] ══ Phase A: text generation for all rows ══")
+
+        phase_a_rows: list[dict] = []   # rows that completed Phase A
+        processed_a = 0
+
+        while not _state.stop_requested and processed_a < limit:
             async with db_factory() as db:
                 rows = (await db.execute(
                     text("""
                         SELECT id, question_text, presentation_slides,
-                               slide_audio_urls, language, subject_id, document_id
+                               slide_audio_urls, language, subject_id,
+                               document_id, question_hash
                         FROM teaching_qa_cache
                         WHERE subject_id = :subj
                           AND pregen_status = 'pending'
@@ -677,32 +1157,158 @@ async def run_pregen_batch(
                 )).fetchall()
 
             if not rows:
-                _log("[Pregen] No more pending rows — batch complete.")
                 break
 
-            row = rows[0]
-            row_dict = dict(row._mapping)
+            row_dict = dict(rows[0]._mapping)
+            # ⚠️ IMPORTANT: never overwrite row_dict["subject_id"] with subject_name.
+            # row_dict["subject_id"] must stay as the UUID so that local storage
+            # paths (write_image / write_audio) are written to the correct folder.
+            # subject_name is passed separately to _pregen_text_only for LLM prompts.
+            cache_id = str(row_dict["id"])
             _state.current_question = (row_dict.get("question_text") or "")[:80]
-            row_dict["subject_id"] = subject_name  # use name for Ollama prompt
 
-            # Mark as 'processing' atomically before starting work
+            # Mark processing
             async with db_factory() as db:
                 await db.execute(
-                    text("""
-                        UPDATE teaching_qa_cache
-                        SET pregen_status = 'processing'
-                        WHERE id = CAST(:id AS uuid)
-                          AND pregen_status = 'pending'
-                    """),
-                    {"id": str(row_dict["id"])},
+                    text("UPDATE teaching_qa_cache SET pregen_status='processing' "
+                         "WHERE id=CAST(:id AS uuid) AND pregen_status='pending'"),
+                    {"id": cache_id},
                 )
                 await db.commit()
 
             try:
                 async with db_factory() as db:
-                    await _pregen_one(row_dict, db)
+                    row_dict = await _pregen_text_only(
+                        row_dict, db, subject_name=subject_name
+                    )
+                phase_a_rows.append(row_dict)
+                _log(f"[Pregen-A] ✓ text: {cache_id[:8]} ({len(row_dict.get('presentation_slides') or [])} slides)")
+            except Exception as e:
+                _state.failed += 1
+                _state.last_error = str(e)
+                _log(f"[Pregen-A] ✗ text failed id={cache_id[:8]}: {e}")
+                async with db_factory() as db:
+                    await db.execute(
+                        text("UPDATE teaching_qa_cache SET pregen_status='failed' "
+                             "WHERE id=CAST(:id AS uuid)"),
+                        {"id": cache_id},
+                    )
+                    await db.commit()
 
-                # Link back to questions table if this question originated there
+            processed_a += 1
+
+        _log(f"[Pregen] Phase A complete — {len(phase_a_rows)} rows have text, "
+             f"{_state.failed} failed")
+
+        # ════════════════════════════════════════════════════════════════════
+        # PHASE B — Media generation (Ollama EVICTED, Wan2GP + VoxCPM free)
+        #   Evict Ollama ONCE here, after ALL text is done.
+        #   Then process each row's image + audio (parallel within row).
+        # ════════════════════════════════════════════════════════════════════
+        _state.phase = "media"
+        _log("[Pregen] ══ Phase B: evicting Ollama → media generation ══")
+        try:
+            n_evicted = await prepare_for_media_generation()
+            _log(f"[Pregen] Phase B: {n_evicted} model(s) evicted from VRAM ✓")
+        except Exception as e:
+            _log(f"[Pregen] Phase B eviction failed (non-fatal): {e}")
+
+        phase_b_rows: list[dict] = []   # rows that completed Phase B
+
+        for row_dict in phase_a_rows:
+            if _state.stop_requested:
+                break
+            cache_id = str(row_dict["id"])
+            slides   = row_dict.get("presentation_slides") or []
+            language = row_dict.get("language") or "en-IN"
+            _state.current_question = (row_dict.get("question_text") or "")[:80]
+
+            try:
+                enriched_slides, audio_url_list, total_duration, audio_durations, image_urls_map = \
+                    await _pregen_media_only(row_dict, slides)
+                row_dict["_enriched_slides"]  = enriched_slides
+                row_dict["_audio_url_list"]   = audio_url_list
+                row_dict["_total_duration"]   = total_duration
+                row_dict["_audio_durations"]  = audio_durations
+                row_dict["_image_urls_map"]   = image_urls_map
+                phase_b_rows.append(row_dict)
+                _log(f"[Pregen-B] ✓ media: {cache_id[:8]} "
+                     f"({len(enriched_slides)} slides, {round(total_duration,1)}s)")
+            except Exception as e:
+                _state.failed += 1
+                _state.last_error = str(e)
+                _log(f"[Pregen-B] ✗ media failed id={cache_id[:8]}: {e}")
+                async with db_factory() as db:
+                    await db.execute(
+                        text("UPDATE teaching_qa_cache SET pregen_status='failed' "
+                             "WHERE id=CAST(:id AS uuid)"),
+                        {"id": cache_id},
+                    )
+                    await db.commit()
+
+        _log(f"[Pregen] Phase B complete — {len(phase_b_rows)} rows have media")
+
+        # ════════════════════════════════════════════════════════════════════
+        # PHASE C — Manim generation (reload Ollama only if needed)
+        #   Only for slides flagged visual_type="manim".
+        #   Save all results to DB as 'done' at the end of this phase.
+        # ════════════════════════════════════════════════════════════════════
+        _state.phase = "manim"
+        manim_rows_needed = any(
+            any(s.get("visual_type") == "manim"
+                for s in (r.get("_enriched_slides") or []))
+            for r in phase_b_rows
+        )
+
+        if manim_rows_needed:
+            _log("[Pregen] ══ Phase C: reloading Ollama for Manim generation ══")
+            try:
+                ready = await prepare_for_manim_generation()
+                _log(f"[Pregen] Phase C: Ollama {'loaded ✓' if ready else 'load timed out — Manim skipped'}")
+            except Exception as e:
+                _log(f"[Pregen] Phase C Ollama load failed (non-fatal): {e}")
+                ready = False
+        else:
+            _log("[Pregen] ══ Phase C: no manim slides — skipping ══")
+            ready = False
+
+        for row_dict in phase_b_rows:
+            if _state.stop_requested:
+                break
+            cache_id       = str(row_dict["id"])
+            enriched_slides = row_dict["_enriched_slides"]
+            audio_durations = row_dict["_audio_durations"]
+            image_urls_map  = row_dict["_image_urls_map"]
+            audio_url_list  = row_dict["_audio_url_list"]
+            total_duration  = row_dict["_total_duration"]
+            subject_name_   = row_dict.get("subject_id") or subject_name
+
+            # Manim per-row
+            manim_video_urls: dict = {}
+            if ready:
+                try:
+                    manim_video_urls = await _pregen_manim_only(
+                        row_dict, enriched_slides, audio_durations
+                    )
+                    if manim_video_urls:
+                        _log(f"[Pregen-C] ✓ manim: {cache_id[:8]} "
+                             f"({len(manim_video_urls)} videos)")
+                except Exception as e:
+                    _log(f"[Pregen-C] manim failed id={cache_id[:8]} (non-fatal): {e}")
+
+            # Save everything → 'done'
+            try:
+                async with db_factory() as db:
+                    await _save_row_result(
+                        db           = db,
+                        row          = row_dict,
+                        slides       = enriched_slides,
+                        audio_url_list = audio_url_list,
+                        total_duration = total_duration,
+                        manim_video_urls = manim_video_urls,
+                        image_urls_map   = image_urls_map,
+                    )
+                # Link back to questions table
                 async with db_factory() as db:
                     await db.execute(
                         text("""
@@ -713,31 +1319,28 @@ async def run_pregen_batch(
                               AND subject_id = :sid
                               AND is_pregen_done = FALSE
                         """),
-                        {"cid": str(row_dict["id"]),
+                        {"cid": cache_id,
                          "qtext": row_dict.get("question_text", ""),
                          "sid": subject_id},
                     )
                     await db.commit()
 
                 _state.done += 1
-
+                _log(f"[Pregen] ✓ Done: {cache_id[:8]} — "
+                     f"{len(enriched_slides)} slides, "
+                     f"{round(total_duration)}s audio, "
+                     f"{len(manim_video_urls)} manim")
             except Exception as e:
-                err = str(e)
                 _state.failed += 1
-                _state.last_error = err
-                _log(f"[Pregen] ✗ Failed: id={row_dict['id']}: {err}")
+                _state.last_error = str(e)
+                _log(f"[Pregen] ✗ Save failed id={cache_id[:8]}: {e}")
                 async with db_factory() as db:
                     await db.execute(
-                        text("""
-                            UPDATE teaching_qa_cache
-                            SET pregen_status = 'failed'
-                            WHERE id = CAST(:id AS uuid)
-                        """),
-                        {"id": str(row_dict["id"])},
+                        text("UPDATE teaching_qa_cache SET pregen_status='failed' "
+                             "WHERE id=CAST(:id AS uuid)"),
+                        {"id": cache_id},
                     )
                     await db.commit()
-
-            processed += 1
 
     except Exception as e:
         _log(f"[Pregen] Fatal batch error: {e}")
@@ -763,25 +1366,18 @@ async def run_pregen_batch(
             _log(f"[Pregen] Auto-retry pass failed (non-fatal): {e}")
 
 
-# ── Layer 2: Smart Media Retry ───────────────────────────────────────────────
+# ── Layer 2: Smart Media Retry (3-phase, mirrors run_pregen_batch) ─────────────
 async def retry_media_for_rows(subject_id: str, db_factory) -> None:
     """
-    Background job: fill in ONLY the missing images/audio for 'done' rows.
-    Does NOT re-run Ollama. Reads existing slide text from DB, regenerates only
-    slides where infographicUrl or audioUrl is null/empty.
-    Slides within each question are processed IN PARALLEL (asyncio.gather).
-    Rows are processed sequentially to avoid GPU OOM.
+    3-phase retry that mirrors run_pregen_batch:
+      Retry-A  Ollama ON  → re-generate slide TEXT for rows with no slides
+      Retry-B  Ollama OFF → image + audio for ALL rows missing media
+      Retry-C  Ollama ON  → Manim for rows missing manim video urls
+    Reuses the same _pregen_text_only / _pregen_media_only /
+    _pregen_manim_only / _save_row_result helpers as the main batch.
 
-    Called automatically after every batch (Layer 2 safety net).
+    Called automatically after every batch (auto safety-net).
     Can also be triggered manually via POST /pregen/retry-media.
-
-    BUG FIXES applied here:
-    1. _retry_one_slide is defined OUTSIDE the for-row loop to avoid Python
-       closure bug where asyncio.gather coroutines captured wrong loop variables.
-    2. Subject NAME (not UUID) is used for local cache path to match main pipeline.
-    3. DB is always written if any slide has media, not only when NEW media was
-       generated this run (fixes partial-data-not-saved regression).
-    4. Confirmation logging added for every save step.
     """
     global _retry_state
     _retry_state = RetryState(
@@ -789,131 +1385,48 @@ async def retry_media_for_rows(subject_id: str, db_factory) -> None:
         subject_id = subject_id,
         started_at = time.time(),
     )
-    _log(f"[Retry] == Media retry pass started for subject={subject_id} ==")
-
-    # ── OUTSIDE the row loop to avoid closure bug ──────────────────────────────
-    async def _retry_one_slide(
-        idx: int,
-        slide: dict,
-        cache_id: str,
-        subject_name: str,
-        language: str,
-    ) -> tuple:
-        """
-        Returns (idx, updated_slide, changed).
-        Runs image + audio concurrently within the slide.
-        All exceptions are caught so one bad slide never kills the others.
-        All variables passed explicitly — no closure capture from outer loop.
-        """
-        needs_img = _needs_image(slide)
-        needs_aud = _needs_audio(slide)
-        if not needs_img and not needs_aud:
-            return idx, slide, False   # nothing to do
-
-        _log(f"[Retry] slide {idx+1}: needs_img={needs_img} needs_aud={needs_aud}")
-
-        slide_title   = slide.get("title", "Concept")
-        slide_content = slide.get("infographic") or slide.get("content") or ""
-        key_points    = slide.get("keyPoints") or []
-        is_story      = slide.get("isStory", False)
-        is_tips       = slide.get("isTips", False)
-        kp_str        = ", ".join(key_points[:3]) if key_points else ""
-        if is_story:
-            style_hint = "warm illustrated story scene, narrative art, soft warm colors, storybook illustration style"
-        elif is_tips:
-            style_hint = "memory tips infographic, lightbulb icons, numbered list visual, bright yellow and blue palette"
-        else:
-            style_hint = "educational diagram, textbook illustration, labeled arrows, clear section boxes, blue and white color scheme"
-
-        img_prompt = (
-            f"Educational infographic poster: \"{slide_title}\". "
-            f"Topic: {slide_content[:120]}. "
-            f"{'Key concepts shown: ' + kp_str + '. ' if kp_str else ''}"
-            f"Style: {style_hint}. "
-            f"Visual design: clean layout, high contrast text labels, white background, professional academic look. "
-            f"Negative: blurry, low quality, pixelated, dark background."
-        )
-        narration = prepare_for_tts(slide.get("narration") or slide.get("content") or "")
-
-        img_coro = _wan2gp_image(img_prompt) if needs_img else asyncio.sleep(0, result=None)
-        aud_coro = _voxcpm_tts(narration, language) if needs_aud else asyncio.sleep(0, result=None)
-        img_result, wav_result = await asyncio.gather(
-            img_coro, aud_coro, return_exceptions=True
-        )
-
-        changed = False
-
-        if needs_img and isinstance(img_result, bytes) and img_result:
-            try:
-                if subject_name:
-                    try:
-                        await write_image(subject_name, cache_id, idx, img_result)
-                        _log(f"[Retry] slide {idx+1}: image saved local disk")
-                    except Exception as le:
-                        _log(f"[Retry] slide {idx+1}: local image write failed (non-fatal): {le}")
-                b2_path = f"ai-teaching/{cache_id}/slide_{idx}.png"
-                b2_url = await upload_to_b2(img_result, b2_path, "image/png")
-                slide["infographicUrl"] = b2_url
-                _log(f"[Retry] slide {idx+1}: image OK -> {b2_url[:70]}")
-                changed = True
-            except Exception as e:
-                _log(f"[Retry] slide {idx+1}: image upload failed -- {e}")
-        elif needs_img:
-            _log(f"[Retry] slide {idx+1}: image still failed -- "
-                 f"{'exception: ' + str(img_result) if isinstance(img_result, Exception) else 'no output'}")
-
-        if needs_aud and isinstance(wav_result, bytes) and wav_result:
-            try:
-                duration = _wav_duration(wav_result)
-                if subject_name:
-                    try:
-                        await write_audio(subject_name, cache_id, language, idx, wav_result)
-                        _log(f"[Retry] slide {idx+1}: audio saved local disk")
-                    except Exception as le:
-                        _log(f"[Retry] slide {idx+1}: local audio write failed (non-fatal): {le}")
-                b2_path = f"ai-teaching/{cache_id}/audio_{idx}.wav"
-                b2_url = await upload_to_b2(wav_result, b2_path, "audio/wav")
-                slide["audioUrl"] = b2_url
-                slide["duration"] = duration
-                _log(f"[Retry] slide {idx+1}: audio OK {round(duration,1)}s -> {b2_url[:70]}")
-                changed = True
-            except Exception as e:
-                _log(f"[Retry] slide {idx+1}: audio upload failed -- {e}")
-        elif needs_aud:
-            _log(f"[Retry] slide {idx+1}: audio still failed -- "
-                 f"{'exception: ' + str(wav_result) if isinstance(wav_result, Exception) else 'no output'}")
-
-        return idx, slide, changed
+    _log(f"[Retry] ══ 3-phase retry started: subject={subject_id} ══")
 
     try:
+        # ── Resolve subject name ──────────────────────────────────────────────
         async with db_factory() as db:
-            # Bug Fix 2: Get subject NAME for local cache path.
-            # Main pregen uses subject name not UUID for the local folder path.
-            # Two-step approach to avoid asyncpg type inference bug with
-            # COALESCE(uuid_col::text, text_col) in a JOIN query.
             name_row = (await db.execute(
-                text("SELECT name FROM subjects WHERE subject_id = :subj LIMIT 1"),
+                text("SELECT name FROM subjects WHERE id = CAST(:subj AS uuid) LIMIT 1"),
                 {"subj": subject_id},
             )).fetchone()
-            subject_name = name_row.name if name_row else subject_id
+        subject_name = name_row.name if name_row else subject_id
 
-            rows = (await db.execute(
+        # ── Fetch ALL incomplete rows ─────────────────────────────────────────
+        # "incomplete" = pending/failed/done but missing slides, image, audio, or manim
+        async with db_factory() as db:
+            all_rows = (await db.execute(
                 text("""
-                    SELECT id::text, question_hash, question_text, language,
-                           subject_id, presentation_slides, slide_audio_urls
+                    SELECT id, question_text, question_hash, language,
+                           subject_id, document_id, presentation_slides,
+                           slide_audio_urls, image_urls, manim_video_urls,
+                           pregen_status
                     FROM teaching_qa_cache
                     WHERE subject_id = :subj
-                      AND pregen_status = 'done'
                       AND (
-                        jsonb_array_length(COALESCE(presentation_slides, '[]'::jsonb)) = 0
-                        OR jsonb_array_length(COALESCE(slide_audio_urls->'urls', '[]'::jsonb)) = 0
-                        OR EXISTS(
-                            SELECT 1 FROM jsonb_array_elements(COALESCE(presentation_slides,'[]'::jsonb)) s
-                            WHERE (s->>'infographicUrl') IS NULL OR (s->>'infographicUrl') = ''
-                        )
-                        OR EXISTS(
-                            SELECT 1 FROM jsonb_array_elements(COALESCE(presentation_slides,'[]'::jsonb)) s
-                            WHERE (s->>'audioUrl') IS NULL OR (s->>'audioUrl') = ''
+                        pregen_status IN ('failed', 'pending')
+                        OR (
+                          pregen_status = 'done'
+                          AND (
+                            jsonb_array_length(COALESCE(presentation_slides,'[]'::jsonb)) = 0
+                            OR jsonb_array_length(COALESCE(slide_audio_urls->'urls','[]'::jsonb)) = 0
+                            OR EXISTS(
+                              SELECT 1 FROM jsonb_array_elements(
+                                COALESCE(presentation_slides,'[]'::jsonb)) s
+                              WHERE (s->>'infographicUrl') IS NULL
+                                 OR (s->>'infographicUrl') = ''
+                            )
+                            OR EXISTS(
+                              SELECT 1 FROM jsonb_array_elements(
+                                COALESCE(presentation_slides,'[]'::jsonb)) s
+                              WHERE (s->>'audioUrl') IS NULL
+                                 OR (s->>'audioUrl') = ''
+                            )
+                          )
                         )
                       )
                     ORDER BY created_at ASC
@@ -921,105 +1434,220 @@ async def retry_media_for_rows(subject_id: str, db_factory) -> None:
                 {"subj": subject_id},
             )).fetchall()
 
-        _retry_state.total = len(rows)
-        if not rows:
-            _log("[Retry] No rows with missing media -- nothing to do.")
+        _retry_state.total = len(all_rows)
+        if not all_rows:
+            _log("[Retry] No incomplete rows — nothing to do.")
             return
 
-        _log(f"[Retry] Found {len(rows)} rows with missing media")
+        _log(f"[Retry] Found {len(all_rows)} incomplete rows")
 
-        for row in rows:
-            cache_id     = row.id
-            language     = row.language or "en-IN"
-            # subject_name fetched once above (before loop) — same for all rows
-            q_hash       = row.question_hash or ""
-            slides       = list(row.presentation_slides or [])
+        # ═══════════════════════════════════════════════════════════════════
+        # RETRY PHASE A — Ollama: regenerate slide text for rows missing it
+        # ═══════════════════════════════════════════════════════════════════
+        _retry_state.current_step = "retry-text"
+        _log("[Retry] ══ Phase A: text generation for rows with no slides ══")
 
-            _retry_state.current_cache_id = cache_id
-            _log(f"[Retry] -- Processing: {(row.question_text or '')[:60]}")
+        rows_need_text = [
+            dict(r._mapping)
+            for r in all_rows
+            if not (r.presentation_slides and len(r.presentation_slides) > 0)
+        ]
+        rows_have_text = [
+            dict(r._mapping)
+            for r in all_rows
+            if r.presentation_slides and len(r.presentation_slides) > 0
+        ]
 
-            if not slides:
-                _log(f"[Retry] {cache_id}: no slides in DB -- skipping (needs full regen)")
-                _retry_state.failed += 1
-                continue
+        if rows_need_text:
+            # Load Ollama
+            try:
+                loaded = await prepare_for_text_generation()
+                _log(f"[Retry-A] Ollama {'loaded ✓' if loaded else 'load failed — text retry skipped'}")
+            except Exception as e:
+                loaded = False
+                _log(f"[Retry-A] Ollama load error: {e}")
 
-            # Bug Fix 1: pass all variables explicitly as args (not captured via closure)
-            _retry_state.current_step = f"all-slides:{len(slides)}"
-            results = await asyncio.gather(
-                *[_retry_one_slide(i, s, cache_id, subject_name, language)
-                  for i, s in enumerate(slides)],
-                return_exceptions=True,
+            if loaded:
+                for row_dict in rows_need_text:
+                    cache_id = str(row_dict["id"])
+                    row_dict["subject_id"] = subject_name
+                    try:
+                        async with db_factory() as db:
+                            row_dict = await _pregen_text_only(row_dict, db)
+                        rows_have_text.append(row_dict)
+                        _log(f"[Retry-A] ✓ text: {cache_id[:8]} "
+                             f"({len(row_dict.get('presentation_slides') or [])} slides)")
+                    except Exception as e:
+                        _retry_state.failed += 1
+                        _log(f"[Retry-A] ✗ text failed {cache_id[:8]}: {e}")
+            else:
+                _log("[Retry-A] Ollama not ready — skipping text-missing rows")
+        else:
+            _log("[Retry-A] All rows already have slide text — skipping Ollama load")
+
+        _log(f"[Retry] Phase A complete — {len(rows_have_text)} rows have text")
+
+        # ═══════════════════════════════════════════════════════════════════
+        # RETRY PHASE B — evict Ollama → image + audio for rows missing media
+        # ═══════════════════════════════════════════════════════════════════
+        _retry_state.current_step = "retry-media"
+        _log("[Retry] ══ Phase B: evicting Ollama → image + audio ══")
+
+        try:
+            n_evicted = await prepare_for_media_generation()
+            _log(f"[Retry] Phase B: {n_evicted} model(s) evicted ✓")
+        except Exception as e:
+            _log(f"[Retry] Phase B eviction failed (non-fatal): {e}")
+
+        phase_b_rows: list[dict] = []
+
+        for row_dict in rows_have_text:
+            cache_id = str(row_dict["id"])
+            slides   = list(row_dict.get("presentation_slides") or [])
+            language = row_dict.get("language") or "en-IN"
+            row_dict["subject_id"] = subject_name
+
+            # Check whether image/audio is actually missing
+            needs_img = any(
+                not (s.get("infographicUrl") or "").startswith("http")
+                for s in slides
+            )
+            needs_aud = any(
+                not (s.get("audioUrl") or "").startswith("http")
+                for s in slides
             )
 
-            any_new_media = False
-            for res in results:
-                if isinstance(res, Exception):
-                    _log(f"[Retry] A slide coroutine raised: {res}")
-                    continue
-                idx_r, updated_slide, slide_changed = res
-                slides[idx_r] = updated_slide
-                if slide_changed:
-                    any_new_media = True
-
-            # Bug Fix 3: Always write DB if any slide has SOME media,
-            # not only if new media was generated in this run.
-            slides_with_img = sum(1 for s in slides if (s.get("infographicUrl") or "").startswith("http"))
-            slides_with_aud = sum(1 for s in slides if (s.get("audioUrl") or "").startswith("http"))
-
-            if slides_with_img == 0 and slides_with_aud == 0:
-                _log(f"[Retry] {cache_id}: no media at all -- marking failed")
-                _retry_state.failed += 1
+            if not needs_img and not needs_aud:
+                # Media complete — still push to Phase C for Manim check
+                row_dict["_enriched_slides"]  = slides
+                row_dict["_audio_url_list"]   = [
+                    {"slideIndex": i, "audioUrl": s["audioUrl"],
+                     "duration": s.get("duration", 0)}
+                    for i, s in enumerate(slides)
+                    if (s.get("audioUrl") or "").startswith("http")
+                ]
+                row_dict["_total_duration"]   = sum(
+                    s.get("duration", 0) for s in slides
+                    if (s.get("audioUrl") or "").startswith("http")
+                )
+                row_dict["_audio_durations"]  = {
+                    i: s.get("duration", 0)
+                    for i, s in enumerate(slides)
+                    if s.get("duration", 0) > 0
+                }
+                row_dict["_image_urls_map"]   = {
+                    str(i): {"url": s["infographicUrl"]}
+                    for i, s in enumerate(slides)
+                    if (s.get("infographicUrl") or "").startswith("http")
+                }
+                phase_b_rows.append(row_dict)
+                _log(f"[Retry-B] {cache_id[:8]}: media already complete — forwarding to Phase C")
                 continue
 
-            if not any_new_media:
-                _log(f"[Retry] {cache_id}: no new media this run -- syncing existing partial data")
+            try:
+                enriched_slides, audio_url_list, total_duration, audio_durations, image_urls_map = \
+                    await _pregen_media_only(row_dict, slides)
+                row_dict["_enriched_slides"]  = enriched_slides
+                row_dict["_audio_url_list"]   = audio_url_list
+                row_dict["_total_duration"]   = total_duration
+                row_dict["_audio_durations"]  = audio_durations
+                row_dict["_image_urls_map"]   = image_urls_map
+                phase_b_rows.append(row_dict)
+                _log(f"[Retry-B] ✓ media: {cache_id[:8]} "
+                     f"({len(enriched_slides)} slides, {round(total_duration,1)}s)")
+            except Exception as e:
+                _retry_state.failed += 1
+                _log(f"[Retry-B] ✗ media failed {cache_id[:8]}: {e}")
 
-            audio_url_list = [
-                {"slideIndex": i, "audioUrl": s["audioUrl"], "duration": s.get("duration", 0)}
-                for i, s in enumerate(slides)
-                if (s.get("audioUrl") or "").startswith("http")
-            ]
-            total_duration = sum(e["duration"] for e in audio_url_list)
+        _log(f"[Retry] Phase B complete — {len(phase_b_rows)} rows have media")
 
-            async with db_factory() as db:
-                await db.execute(
-                    text("""
-                        UPDATE teaching_qa_cache
-                        SET presentation_slides    = CAST(:slides AS jsonb),
-                            slide_audio_urls       = CAST(:audio  AS jsonb),
-                            total_duration_seconds = :dur
-                        WHERE id = CAST(:id AS uuid)
-                    """),
-                    {
-                        "slides": json.dumps(slides),
-                        "audio":  json.dumps({"language": language, "urls": audio_url_list}),
-                        "dur":    total_duration,
-                        "id":     cache_id,
-                    },
+        # ═══════════════════════════════════════════════════════════════════
+        # RETRY PHASE C — reload Ollama → Manim for formula slides
+        # ═══════════════════════════════════════════════════════════════════
+        _retry_state.current_step = "retry-manim"
+
+        manim_needed = any(
+            any(s.get("visual_type") == "manim"
+                for s in (r.get("_enriched_slides") or []))
+            for r in phase_b_rows
+        )
+
+        if manim_needed:
+            _log("[Retry] ══ Phase C: reloading Ollama for Manim ══")
+            try:
+                ready = await prepare_for_manim_generation()
+                _log(f"[Retry] Phase C: Ollama {'loaded ✓' if ready else 'timed out — Manim skipped'}")
+            except Exception as e:
+                ready = False
+                _log(f"[Retry] Phase C Ollama load failed (non-fatal): {e}")
+        else:
+            _log("[Retry] ══ Phase C: no manim slides — skipping ══")
+            ready = False
+
+        # ── Save all Phase B rows ─────────────────────────────────────────
+        for row_dict in phase_b_rows:
+            cache_id        = str(row_dict["id"])
+            enriched_slides = row_dict["_enriched_slides"]
+            audio_durations = row_dict["_audio_durations"]
+            audio_url_list  = row_dict["_audio_url_list"]
+            total_duration  = row_dict["_total_duration"]
+            image_urls_map  = row_dict["_image_urls_map"]
+
+            # Manim
+            manim_video_urls: dict = {}
+            if ready:
+                has_manim_slides = any(
+                    s.get("visual_type") == "manim"
+                    for s in enriched_slides
                 )
-                await db.commit()
-            _log(f"[Retry] DB updated: {cache_id} img={slides_with_img}/{len(slides)} aud={slides_with_aud}/{len(slides)}")
+                if has_manim_slides:
+                    try:
+                        manim_video_urls = await _pregen_manim_only(
+                            row_dict, enriched_slides, audio_durations
+                        )
+                        if manim_video_urls:
+                            _log(f"[Retry-C] ✓ manim: {cache_id[:8]} "
+                                 f"({len(manim_video_urls)} videos)")
+                    except Exception as e:
+                        _log(f"[Retry-C] manim failed {cache_id[:8]} (non-fatal): {e}")
 
-            if q_hash and subject_id:
-                try:
-                    await write_slide_cache(subject_id, q_hash, {
-                        "cache_id":            cache_id,
-                        "presentationSlides":  slides,
-                        "slideAudioUrls":      {"language": language, "urls": audio_url_list},
-                        "totalDurationSeconds": total_duration,
-                    })
-                    _log(f"[Retry] Local cache written: {subject_id[:8]}/{q_hash[:12]}.json")
-                    
-                    # Also invalidate Redis L1 cache so it pulls the fresh data next time
+            # Save
+            try:
+                async with db_factory() as db:
+                    await _save_row_result(
+                        db               = db,
+                        row              = row_dict,
+                        slides           = enriched_slides,
+                        audio_url_list   = audio_url_list,
+                        total_duration   = total_duration,
+                        manim_video_urls = manim_video_urls,
+                        image_urls_map   = image_urls_map,
+                    )
+                # Invalidate Redis L1 so fresh data is served next time
+                q_hash = row_dict.get("question_hash") or ""
+                if q_hash:
                     try:
                         await delete_from_cache(q_hash, subject_id)
                     except Exception as e:
-                        _log(f"[Retry] Redis cache delete failed: {e}")
-                except Exception as e:
-                    _log(f"[Retry] local cache write failed (non-fatal): {e}")
+                        _log(f"[Retry] Redis invalidate failed (non-fatal): {e}")
 
-            _log(f"[Retry] OK {cache_id}: img={slides_with_img}/{len(slides)} aud={slides_with_aud}/{len(slides)}")
-            _retry_state.done += 1
+                _retry_state.done += 1
+                slides_with_img = sum(
+                    1 for s in enriched_slides
+                    if (s.get("infographicUrl") or "").startswith("http")
+                )
+                slides_with_aud = sum(
+                    1 for s in enriched_slides
+                    if (s.get("audioUrl") or "").startswith("http")
+                )
+                _log(f"[Retry] ✓ Done: {cache_id[:8]} — "
+                     f"img={slides_with_img}/{len(enriched_slides)} "
+                     f"aud={slides_with_aud}/{len(enriched_slides)} "
+                     f"manim={len(manim_video_urls)}")
+            except Exception as e:
+                _retry_state.failed += 1
+                _retry_state.last_error = str(e)
+                _log(f"[Retry] ✗ Save failed {cache_id[:8]}: {e}")
 
     except Exception as e:
         _log(f"[Retry] Fatal error: {e}")
@@ -1030,9 +1658,11 @@ async def retry_media_for_rows(subject_id: str, db_factory) -> None:
         _retry_state.current_step = ""
         elapsed = round(time.time() - _retry_state.started_at, 1)
         _log(
-            f"[Retry] == Media retry complete: "
-            f"done={_retry_state.done} failed={_retry_state.failed} elapsed={elapsed}s =="
+            f"[Retry] ══ 3-phase retry complete: "
+            f"done={_retry_state.done} failed={_retry_state.failed} "
+            f"elapsed={elapsed}s ══"
         )
+
 
 
 async def predict_questions(doc_id: str, subject_id: str, chunk_texts: list[str], async_session_maker) -> int:

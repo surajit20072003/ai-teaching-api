@@ -302,11 +302,13 @@
         </div>
         <button class="btn btn-success" id="btnStart" onclick="startPregen()">▶ Start Batch</button>
         <button class="btn btn-danger"  id="btnStop"  onclick="stopPregen()" disabled>⏹ Stop</button>
-        <button class="btn btn-ghost"   id="btnRetry" onclick="retryFailed()">↩ Retry Failed</button>
+        <button class="btn btn-ghost"   id="btnRetryFailed" onclick="retryFailed()">↩ Retry Failed</button>
         <button class="btn btn-ghost"   onclick="refreshAll()">⟳ Refresh</button>
       </div>
 
-      <!-- Progress -->
+      <!-- Status banner — shown after /pregen/start returns all_done or has_failed -->
+      <div id="startStatusBanner" style="display:none;border-radius:8px;padding:10px 16px;margin-top:8px;font-size:13px;font-weight:500;"></div>
+
       <div class="progress-wrap" id="progressWrap" style="display:none;">
         <div class="progress-label">
           <span id="progressLabel">Processing...</span>
@@ -750,6 +752,62 @@
   }
 
   // ── Start ────────────────────────────────────────────────────────────────────
+  // Shared handler for all /pregen/start responses
+  function handleStartResponse(d, r, logPrefix) {
+    if (r && r.status === 409) {
+      log(`${logPrefix}: Already running`, 'warn');
+      return false;
+    }
+    if (d.error) {
+      log(`${logPrefix} error: ${d.error}`, 'fail');
+      return false;
+    }
+
+    if (d.status === 'all_done') {
+      log(`${logPrefix}: ✅ ${d.message}`, 'ok');
+      // Flash a green banner on the batch control section
+      const banner = document.getElementById('startStatusBanner');
+      if (banner) {
+        banner.style.display = 'block';
+        banner.style.background = 'rgba(0,212,170,0.10)';
+        banner.style.border = '1px solid rgba(0,212,170,0.30)';
+        banner.style.color = 'var(--accent2)';
+        banner.innerHTML = `✅ Subject fully complete — ${d.done ?? 0} row(s) done. Nothing to generate!`;
+      }
+      document.getElementById('btnStart').disabled = false;
+      document.getElementById('btnStop').disabled  = true;
+      return false;  // don't start polling
+    }
+
+    if (d.status === 'has_failed') {
+      log(`${logPrefix}: ⚠ ${d.message}`, 'warn');
+      const banner = document.getElementById('startStatusBanner');
+      if (banner) {
+        banner.style.display = 'block';
+        banner.style.background = 'rgba(255,169,77,0.10)';
+        banner.style.border = '1px solid rgba(255,169,77,0.30)';
+        banner.style.color = 'var(--warn)';
+        banner.innerHTML = `⚠ ${d.failed} failed row(s) — use <b>"Retry Failed"</b> button below, then Start again.`;
+      }
+      // Highlight the Retry Failed button
+      const retryBtn = document.getElementById('btnRetryFailed');
+      if (retryBtn) {
+        retryBtn.style.outline = '2px solid var(--warn)';
+        retryBtn.style.outlineOffset = '2px';
+        setTimeout(() => { if (retryBtn) { retryBtn.style.outline = ''; retryBtn.style.outlineOffset = ''; } }, 5000);
+      }
+      document.getElementById('btnStart').disabled = false;
+      document.getElementById('btnStop').disabled  = true;
+      return false;  // don't start polling
+    }
+
+    // Normal case — batch started
+    log(`${logPrefix}: Batch started — ${d.message || 'OK'} (${d.pending_rows ?? 0} rows queued)`, 'ok');
+    const banner = document.getElementById('startStatusBanner');
+    if (banner) banner.style.display = 'none';
+    return true;  // start polling
+  }
+
   async function startPregen() {
     const subjectId = document.getElementById('subjectSelect').value;
     if (!subjectId) { alert('Please select a Subject ID first.'); return; }
@@ -765,14 +823,13 @@
         body: JSON.stringify({ subjectId: subjectId })
       });
       const d = await r.json();
-      if (d.error) {
-        log(`Start error: ${d.error}`, 'fail');
+      const shouldPoll = handleStartResponse(d, r, 'Start');
+      if (shouldPoll) {
+        pollTimer = setTimeout(pollStatus, 1500);
+      } else {
         document.getElementById('btnStart').disabled = false;
         document.getElementById('btnStop').disabled  = true;
-        return;
       }
-      log(`Batch started — ${d.message || 'OK'}`, 'ok');
-      pollTimer = setTimeout(pollStatus, 1500);
     } catch (e) {
       log(`Start failed: ${e.message}`, 'fail');
       document.getElementById('btnStart').disabled = false;
@@ -1259,12 +1316,13 @@
         body:    JSON.stringify({ subjectId, topicId, limit: 200 }),
       });
       const d = await r.json();
-      if (d.error) throw new Error(d.error);
-      log(`Topic pre-gen started: ${d.message}`, 'ok');
-      document.getElementById('subjectSelect').value = subjectId;
-      document.getElementById('btnStart').disabled = true;
-      document.getElementById('btnStop').disabled  = false;
-      pollTimer = setTimeout(pollStatus, 1500);
+      const shouldPoll = handleStartResponse(d, r, 'Topic pre-gen');
+      if (shouldPoll) {
+        document.getElementById('subjectSelect').value = subjectId;
+        document.getElementById('btnStart').disabled = true;
+        document.getElementById('btnStop').disabled  = false;
+        pollTimer = setTimeout(pollStatus, 1500);
+      }
     } catch(e) {
       log(`Topic pre-gen error: ${e.message}`, 'fail');
     }

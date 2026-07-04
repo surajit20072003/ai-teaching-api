@@ -5,7 +5,21 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends --fix-broken \
         ffmpeg \
         poppler-utils \
-        libmagic1 && \
+        libmagic1 \
+        # Build tools (needed for pycairo / manim)
+        build-essential \
+        python3-dev \
+        meson \
+        ninja-build \
+        # Manim rendering dependencies
+        libcairo2-dev \
+        libpango1.0-dev \
+        texlive-latex-base \
+        texlive-latex-extra \
+        texlive-fonts-recommended \
+        texlive-science \
+        dvisvgm \
+        pkg-config && \
     rm -rf /var/lib/apt/lists/*
 
 
