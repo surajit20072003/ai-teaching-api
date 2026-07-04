@@ -1,25 +1,23 @@
 """
 core/manim_generator.py
 ────────────────────────
-Generate Manim Python code via Ollama (qwen3-coder:latest),
-enforce audio-sync timing, render to MP4, and upload to B2.
+Generate Manim Python code via Ollama, enforce audio-sync timing per segment,
+dry-run validate, render to MP4, and upload to B2.
 
 Pipeline per slide:
-  1. generate_manim_code()     — Ollama → complete Python file (using prompt files)
-  2. _validate_syntax()        — AST parse before render (no wasted render time)
-  3. _enforce_timing()         — scale self.wait() to match audio duration (no LLM)
-  4. render_manim_code()       — subprocess: `manim -qm slide_N.py SlideScene`
-  5. local save + B2 upload    — via local_storage + b2_storage
-
-Prompt files (edit without Docker restart):
-  core/prompts/manim_system_prompt.txt  — system rules (zero-failure mandate)
-  core/prompts/manim_user_template.txt  — per-slide user prompt template
-  core/prompts/manim_repair_prompt.txt  — repair prompt when render fails
+  1. generate_manim_code()          — Ollama → complete Python file
+  2. _check_completeness()          — truncation detection before render
+  3. _enforce_timing_per_segment()  — per-segment hard sync (v2.6)
+  4. _scrub_invalid_waits()         — remove self.wait(0) crashes
+  5. _validate_runtime_dry()        — manim --dry_run fast check
+  6. render_manim_code()            — subprocess: manim -qm slide_N.py SlideScene
+  7. local save + B2 upload
 
 Environment variables:
   OLLAMA_URL            — Ollama base URL (default: http://host.docker.internal:11434)
-  OLLAMA_MODEL          — model to use   (default: qwen3-coder:latest)
-  OLLAMA_TIMEOUT        — seconds         (default: 900)
+  OLLAMA_MODEL          — model for slides (default: qwen3-coder:latest)
+  MANIM_OLLAMA_MODEL    — model for Manim code (default: devstral:24b)
+  OLLAMA_TIMEOUT        — seconds (default: 900)
   MANIM_MAX_RETRIES     — code-gen retries (default: 3)
   MANIM_RENDER_TIMEOUT  — seconds for manim CLI (default: 300)
   MANIM_QUALITY         — l/m/h/k (default: m = 720p)
@@ -43,7 +41,8 @@ logger = logging.getLogger(__name__)
 
 # ── Config ──────────────────────────────────────────────────────────────────────
 OLLAMA_URL           = os.getenv("OLLAMA_URL",    "http://host.docker.internal:11434")
-OLLAMA_MODEL         = os.getenv("OLLAMA_MODEL",  "qwen3-coder:latest")
+OLLAMA_MODEL         = os.getenv("OLLAMA_MODEL",  "qwen3-coder:latest")   # slides
+MANIM_OLLAMA_MODEL   = os.getenv("MANIM_OLLAMA_MODEL", "devstral:24b")    # Manim code
 OLLAMA_TIMEOUT       = int(os.getenv("OLLAMA_TIMEOUT",       "900"))
 MANIM_MAX_RETRIES    = int(os.getenv("MANIM_MAX_RETRIES",    "3"))
 MANIM_RENDER_TIMEOUT = int(os.getenv("MANIM_RENDER_TIMEOUT", "300"))
@@ -97,30 +96,36 @@ def _split_narration_segments(narration: str, total_duration: float) -> list:
 
 
 def _format_narration_segments(segments: list) -> str:
-    """Format segments for the user prompt."""
+    """Format segments in v2.6 two-line style for clearer LLM alignment."""
     lines = []
     for seg in segments:
         lines.append(
-            f"  Segment {seg['index']} ({seg['start']:.1f}s – {seg['end']:.1f}s, "
-            f"{seg['duration']:.1f}s): \"{seg['text']}\""
+            f"  Segment {seg['index']} ({seg['start']:.1f}s - {seg['end']:.1f}s, "
+            f"duration {seg['duration']:.1f}s):"
         )
+        lines.append(f"    Narration: \"{seg['text']}\"")
     return "\n".join(lines)
 
 
 def _build_user_prompt(slide: dict, audio_duration: float) -> str:
     """Fill the manim_user_template.txt with narration-segment timing."""
-    template  = _load_prompt("manim_user_template.txt")
-    narration = slide.get("narration", "") or slide.get("content", "") or ""
-    formula   = slide.get("formula", "") or ""
-    key_pts   = slide.get("keyPoints") or []
-    content   = slide.get("content", "") or slide.get("infographic", "") or ""
+    template          = _load_prompt("manim_user_template.txt")
+    narration         = slide.get("narration", "") or slide.get("content", "") or ""
+    formula           = slide.get("formula", "") or ""
+    key_pts           = slide.get("keyPoints") or []
+    content           = slide.get("content", "") or slide.get("infographic", "") or ""
+    visual_description = (
+        slide.get("visual_description") or
+        slide.get("manim_spec") or
+        slide.get("infographic") or
+        ""
+    )
 
-    segments  = _split_narration_segments(narration, audio_duration)
-    seg_text  = _format_narration_segments(segments)
+    segments = _split_narration_segments(narration, audio_duration)
+    seg_text = _format_narration_segments(segments)
 
-    # Provide first two segment durations for the skeleton in the template
-    seg1_dur  = segments[0]["duration"] if len(segments) > 0 else audio_duration / 2
-    seg2_dur  = segments[1]["duration"] if len(segments) > 1 else audio_duration / 2
+    seg1_dur = segments[0]["duration"] if len(segments) > 0 else audio_duration / 2
+    seg2_dur = segments[1]["duration"] if len(segments) > 1 else audio_duration / 2
 
     return template.format(
         title              = slide.get("title", ""),
@@ -128,6 +133,7 @@ def _build_user_prompt(slide: dict, audio_duration: float) -> str:
         formula            = formula,
         key_points         = ", ".join(key_pts) if key_pts else "None",
         content            = content,
+        visual_description = visual_description,
         duration           = audio_duration,
         seg1_duration      = seg1_dur,
         seg2_duration      = seg2_dur,
@@ -164,95 +170,173 @@ def _basic_sanity_check(code: str) -> tuple[bool, str]:
     if "get_part_by_tex" in code:
         return False, "Forbidden: get_part_by_tex() detected — use Indicate() instead"
 
-    # Class name must be SlideScene
-    if "class SlideScene" not in code:
-        return False, "Missing: class SlideScene(Scene) not found in generated code"
+    # Class name: allow SlideScene or MainScene
+    if "class SlideScene" not in code and "class MainScene" not in code:
+        return False, "Missing: class SlideScene(Scene) or MainScene(Scene) not found"
 
     return True, ""
 
 
-# ── Timing enforcer ──────────────────────────────────────────────────────────────
-def _parse_animation_duration(code: str) -> tuple[float, list]:
-    """Parse total animation duration from Manim code."""
-    wait_pattern = re.compile(r"self\.wait\(\s*([\d.]+)\s*\)")
-    wait_locations = []
-    total_wait = 0.0
-    for match in wait_pattern.finditer(code):
-        dur = float(match.group(1))
-        wait_locations.append((match.start(), match.end(), dur))
-        total_wait += dur
-
-    runtime_pattern = re.compile(r"run_time\s*=\s*([\d.]+)")
-    total_runtime = sum(float(m.group(1)) for m in runtime_pattern.finditer(code))
-
-    return total_wait + total_runtime, wait_locations
-
-
-def _append_final_wait(code: str, duration: float) -> str:
-    """Append self.wait(X) before the last line in the construct() method."""
-    wait_line = f"\n        self.wait({duration:.3f})\n"
-    lines = code.splitlines(keepends=True)
-    for i in range(len(lines) - 1, -1, -1):
-        if lines[i].strip() and not lines[i].strip().startswith("#"):
-            lines.insert(i + 1, wait_line)
-            break
-    else:
-        lines.append(wait_line)
-    return "".join(lines)
-
-
-def _enforce_timing(code: str, audio_duration: float) -> str:
+# ── Completeness check (truncation detection) ────────────────────────────────────
+def _check_completeness(code: str) -> list[str]:
     """
-    Scale self.wait() calls in Manim code to match real audio duration.
-    Tolerance: ±0.1s — don't patch if already close enough.
+    Detect truncated code BEFORE timing enforcement.
+    Catches LLM outputs that were cut mid-statement.
     """
-    if audio_duration <= 0:
-        logger.warning("[ManimGen] audio_duration=0 — skipping timing enforcement")
-        return code
+    errors = []
+    lines = code.strip().split("\n")
+    if not lines:
+        return ["Empty code"]
+    last = lines[-1].strip()
+    # Bare identifier on last line (truncation artifact)
+    if re.match(r'^[a-zA-Z_]\w*$', last):
+        errors.append(f"Possible truncation — last line is bare identifier: '{last}'")
+    # Line ending with binary operator
+    if re.search(r'[\+\-\*\/\=\,\(]$', last):
+        errors.append(f"Possible truncation — last line ends with operator: '{last}'")
+    # compile() syntax test
+    try:
+        compile(code, "<string>", "exec")
+    except SyntaxError as e:
+        errors.append(f"SyntaxError at line {e.lineno}: {e.msg}")
+    return errors
 
-    total_duration, wait_locations = _parse_animation_duration(code)
 
-    if total_duration <= 0:
-        logger.info(f"[ManimGen] No timing found — appending self.wait({audio_duration:.3f})")
-        return _append_final_wait(code, audio_duration)
+def _scrub_invalid_waits(code: str) -> str:
+    """Remove self.wait(0) and self.wait(0.0) which crash Manim 0.19."""
+    return re.sub(r"self\.wait\(\s*0(?:\.0+)?\s*\)", "", code)
 
-    deficit = audio_duration - total_duration
 
-    if abs(deficit) < 0.1:
-        logger.info(f"[ManimGen] Duration {total_duration:.2f}s ≈ target {audio_duration:.2f}s ✓")
-        return code
+# ── Per-segment hard sync timing enforcer (v2.6) ─────────────────────────────────
+def _enforce_timing_per_segment(code: str, segments: list) -> str:
+    """
+    For each '# Segment N' block: measure actual animation time, then inject
+    self.wait(deficit) + FadeOut to exactly match that segment's audio duration.
+    Much more precise than global scaling.
+    """
+    if not segments or "# Segment" not in code:
+        # Fallback: legacy global timing
+        return _enforce_timing_global(code, sum(s.get("duration", 5.0) for s in segments))
 
-    if deficit > 0:
-        if wait_locations:
-            last_start, last_end, last_dur = wait_locations[-1]
-            new_dur = last_dur + deficit
-            patched = code[:last_start] + f"self.wait({new_dur:.3f})" + code[last_end:]
-            logger.info(f"[ManimGen] Extended last wait {last_dur:.2f}s → {new_dur:.2f}s")
-            return patched
+    lines = code.split("\n")
+    new_lines: list = []
+    segment_lines: list = []
+    current_seg_idx = -1
+    indent = "        "  # 8 spaces — inside construct()
+
+    def _sum_block_timing(block_lines: list) -> float:
+        block_text = "\n".join(block_lines)
+        waits = sum(float(m) for m in re.findall(r"self\.wait\(\s*([\d.]+)\s*\)", block_text))
+        runs  = sum(float(m) for m in re.findall(r"run_time\s*=\s*([\d.]+)", block_text))
+        return waits + runs
+
+    def process_block(block_lines: list, seg_idx: int) -> list:
+        if seg_idx < 0 or seg_idx >= len(segments):
+            return block_lines
+        target = float(segments[seg_idx].get("duration", 5.0))
+        actual = _sum_block_timing(block_lines)
+        block_text = "\n".join(block_lines)
+
+        # Inject FadeOut if missing
+        fadeout_dur = 0.5
+        if "FadeOut(" not in block_text:
+            block_lines.append(f"{indent}# V2.6: auto-injected cleanup")
+            block_lines.append(f"{indent}self.play(FadeOut(*self.mobjects), run_time={fadeout_dur})")
+            actual += fadeout_dur
+
+        # Inject wait for remaining deficit
+        deficit = target - actual
+        if deficit > 0.05:
+            block_lines.append(
+                f"{indent}# HardSync: {actual:.2f}s → {target:.2f}s"
+            )
+            block_lines.append(f"{indent}self.wait({deficit:.3f})")
+        elif deficit < -0.5:
+            block_lines.append(
+                f"{indent}# HardSync WARNING: animation {abs(deficit):.2f}s over target"
+            )
+        return block_lines
+
+    for line in lines:
+        seg_match = re.search(r"#\s*Segment\s*(\d+)", line, re.IGNORECASE)
+        if seg_match:
+            if current_seg_idx >= 0:
+                new_lines.extend(process_block(segment_lines, current_seg_idx))
+                segment_lines = []
+            try:
+                current_seg_idx = int(seg_match.group(1)) - 1  # 1-based → 0-based
+            except Exception:
+                current_seg_idx = -1
+
+        if current_seg_idx >= 0:
+            segment_lines.append(line)
         else:
-            return _append_final_wait(code, deficit)
-    else:
-        total_wait = sum(dur for _, _, dur in wait_locations)
-        if total_wait <= 0:
-            logger.warning("[ManimGen] No waits to scale — animation exceeds target")
-            return code
-        runtime_total = total_duration - total_wait
-        available_wait = max(0.1, audio_duration - runtime_total)
-        scale = available_wait / total_wait
-        patched = code
-        for start, end, dur in reversed(wait_locations):
-            new_dur = max(0.1, dur * scale)
-            patched = patched[:start] + f"self.wait({new_dur:.3f})" + patched[end:]
-        logger.info(f"[ManimGen] Scaled waits by {scale:.3f}x to fit {audio_duration:.2f}s")
-        return patched
+            new_lines.append(line)
+
+    # Process final segment
+    if current_seg_idx >= 0 and segment_lines:
+        new_lines.extend(process_block(segment_lines, current_seg_idx))
+
+    return "\n".join(new_lines)
+
+
+def _enforce_timing_global(code: str, audio_duration: float) -> str:
+    """Legacy global timing scaler — fallback when no segment markers found."""
+    if audio_duration <= 0:
+        return code
+    wait_pat = re.compile(r"self\.wait\(\s*([\d.]+)\s*\)")
+    run_pat  = re.compile(r"run_time\s*=\s*([\d.]+)")
+    waits    = [(m.start(), m.end(), float(m.group(1))) for m in wait_pat.finditer(code)]
+    total    = sum(d for _, _, d in waits) + sum(float(m.group(1)) for m in run_pat.finditer(code))
+    if total <= 0:
+        return code + f"\n        self.wait({audio_duration:.3f})\n"
+    deficit = audio_duration - total
+    if abs(deficit) < 0.1:
+        return code
+    if deficit > 0 and waits:
+        s, e, d = waits[-1]
+        return code[:s] + f"self.wait({d + deficit:.3f})" + code[e:]
+    total_wait = sum(d for _, _, d in waits)
+    if total_wait <= 0:
+        return code
+    scale  = max(0.0, (total_wait + deficit)) / total_wait
+    patched = code
+    for s, e, d in reversed(waits):
+        patched = patched[:s] + f"self.wait({max(0.1, d * scale):.3f})" + patched[e:]
+    return patched
+
+
+# ── Dry-run validator (fast, no video frames) ────────────────────────────────────
+def _validate_runtime_dry(py_code: str, slide_index: int, tmp_dir: str) -> Optional[str]:
+    """
+    Run manim --dry_run before full render to catch runtime errors fast.
+    Returns error string, or None if clean.
+    """
+    import tempfile
+    tmp_py = os.path.join(tmp_dir, f"dryrun_{slide_index}.py")
+    try:
+        with open(tmp_py, "w", encoding="utf-8") as f:
+            f.write(py_code)
+        r = subprocess.run(
+            ["manim", "-q", "l", "--dry_run", "--disable_caching", tmp_py, "SlideScene"],
+            capture_output=True, text=True, timeout=30,
+        )
+        if os.path.exists(tmp_py):
+            os.unlink(tmp_py)
+        if r.returncode != 0:
+            return f"DryRun RC={r.returncode}:\n{r.stderr[-800:]}"
+        return None
+    except subprocess.TimeoutExpired:
+        return "DryRun timed out (30s)"
+    except Exception as e:
+        return f"DryRun error: {e}"
 
 
 # ── Ollama code generation ───────────────────────────────────────────────────────
 async def generate_manim_code(slide: dict, slide_index: int, audio_duration: float) -> str:
     """
-    Call Ollama (qwen3-coder:latest) to generate complete Manim Python code.
-    Uses prompt files from core/prompts/ for zero-restart prompt iteration.
-    Returns the Python code string. Raises RuntimeError on failure after MAX_RETRIES.
+    Call Ollama (MANIM_OLLAMA_MODEL, default devstral:24b) to generate Manim code.
+    Returns the Python code string. Raises RuntimeError after MAX_RETRIES.
     """
     system_prompt = _load_prompt("manim_system_prompt.txt")
     user_prompt   = _build_user_prompt(slide, audio_duration)
@@ -279,13 +363,13 @@ async def generate_manim_code(slide: dict, slide_index: int, audio_duration: flo
                 resp = await client.post(
                     f"{OLLAMA_URL}/api/generate",
                     json={
-                        "model":  OLLAMA_MODEL,
+                        "model":  MANIM_OLLAMA_MODEL,   # dedicated Manim model
                         "system": system_prompt,
                         "prompt": prompt,
                         "stream": False,
                         "options": {
-                            "temperature": 0.2,   # low for code — near-deterministic
-                            "num_predict": 4096,
+                            "temperature": 0.2,
+                            "num_predict": 6000,
                         },
                     },
                 )
@@ -295,24 +379,24 @@ async def generate_manim_code(slide: dict, slide_index: int, audio_duration: flo
             code = _clean_python_code(raw)
             last_code = code
 
-            # ── Validation gate 1: basic structure ──────────────────────────
-            if "class SlideScene" not in code or "def construct" not in code:
-                last_err = "Generated code missing SlideScene or construct()"
+            # ── Gate 1: structure ────────────────────────────────────────────
+            if "def construct" not in code:
+                last_err = "Generated code missing construct()"
                 logger.warning(f"[ManimGen] Attempt {attempt}: {last_err}")
                 if attempt < MANIM_MAX_RETRIES:
                     await asyncio.sleep(2 ** attempt)
                 continue
 
-            # ── Validation gate 2: AST syntax check ─────────────────────────
-            ok, syntax_err = _validate_syntax(code)
-            if not ok:
-                last_err = syntax_err
-                logger.warning(f"[ManimGen] Attempt {attempt}: AST syntax error — {syntax_err}")
+            # ── Gate 2: completeness (truncation) ───────────────────────────
+            completeness_errs = _check_completeness(code)
+            if completeness_errs:
+                last_err = " | ".join(completeness_errs)
+                logger.warning(f"[ManimGen] Attempt {attempt}: Truncated — {last_err}")
                 if attempt < MANIM_MAX_RETRIES:
                     await asyncio.sleep(2 ** attempt)
                 continue
 
-            # ── Validation gate 3: forbidden pattern check ───────────────────
+            # ── Gate 3: forbidden patterns ───────────────────────────────────
             ok, pattern_err = _basic_sanity_check(code)
             if not ok:
                 last_err = pattern_err
@@ -473,21 +557,38 @@ async def generate_and_render_slide_manim(
     or None on failure.
     """
     manim_dir = local_storage.get_manim_dir(subject_id, cache_id)
+    narration  = slide.get("narration", "") or slide.get("content", "") or ""
+    segments   = _split_narration_segments(narration, audio_duration)
 
-    # ── Step 1+2: Code gen + validation ──────────────────────────────────────
+    # ── Step 1: Code gen + validation ────────────────────────────────────────
     try:
         py_code = await generate_manim_code(slide, slide_index, audio_duration)
     except RuntimeError as e:
         logger.error(f"[ManimGen] Code gen failed for slide {slide_index}: {e}")
         return None
 
-    # ── Step 3: Timing enforcement ────────────────────────────────────────────
-    py_code = _enforce_timing(py_code, audio_duration)
+    # ── Step 2: Scrub zero-waits (Manim 0.19 crash) ──────────────────────────
+    py_code = _scrub_invalid_waits(py_code)
 
-    # ── Step 4: Save .py to disk ──────────────────────────────────────────────
+    # ── Step 3: Per-segment hard sync timing ─────────────────────────────────
+    py_code = _enforce_timing_per_segment(py_code, segments)
+    logger.info(f"[ManimGen] Per-segment sync applied ({len(segments)} segments, {audio_duration:.2f}s)")
+
+    # ── Step 4: Dry-run validation (fast, no frames) ─────────────────────────
+    dry_err = _validate_runtime_dry(py_code, slide_index, manim_dir)
+    if dry_err:
+        logger.warning(f"[ManimGen] DryRun failed slide {slide_index}: {dry_err[:300]}")
+        # Write crash context for post-mortem, but don't abort — try render anyway
+        try:
+            Path(manim_dir).mkdir(parents=True, exist_ok=True)
+            (Path(manim_dir) / f"dryrun_fail_{slide_index}.log").write_text(dry_err)
+        except Exception:
+            pass
+
+    # ── Step 5: Save .py to disk ──────────────────────────────────────────────
     local_py = await local_storage.write_manim_code(subject_id, cache_id, slide_index, py_code)
 
-    # ── Step 5: Render with retry ─────────────────────────────────────────────
+    # ── Step 6: Render with retry ─────────────────────────────────────────────
     local_mp4 = None
     for attempt in range(1, 3):  # up to 2 render attempts
         local_mp4 = await asyncio.get_event_loop().run_in_executor(
@@ -507,14 +608,14 @@ async def generate_and_render_slide_manim(
         logger.error(f"[ManimGen] All render attempts failed for slide {slide_index}")
         return None
 
-    # ── Step 6: Copy to canonical path ────────────────────────────────────────
+    # ── Step 7: Copy to canonical path ────────────────────────────────────────
     canonical_mp4 = local_storage.get_manim_video_path(subject_id, cache_id, slide_index)
     if local_mp4 != canonical_mp4:
         os.makedirs(os.path.dirname(canonical_mp4), exist_ok=True)
         shutil.copy2(local_mp4, canonical_mp4)
         local_mp4 = canonical_mp4
 
-    # ── Step 7: Upload to B2 ──────────────────────────────────────────────────
+    # ── Step 8: Upload to B2 ──────────────────────────────────────────────────
     b2_url = None
     if b2_storage is not None:
         try:
