@@ -14,6 +14,7 @@ set -euo pipefail
 # ── Config ──────────────────────────────────────────────────
 CPU_USER="administrator"
 CPU_HOST="116.202.230.124"
+CPU_PORT="81"
 CPU_PATH="/home2/ai-teaching-api/storage"   # host path on CPU (maps to /app/storage in Docker)
 GPU_PATH="/sdb-disk/ai-teaching"            # GPU staging area
 SSH_KEY="/home/administrator/.ssh/cpu_sync"
@@ -45,6 +46,7 @@ fi
 
 # ── Ensure CPU storage dir exists ───────────────────────────
 ssh -i "$SSH_KEY" \
+    -p "$CPU_PORT" \
     -o StrictHostKeyChecking=no \
     -o ConnectTimeout=10 \
     "$CPU_USER@$CPU_HOST" \
@@ -61,7 +63,7 @@ rsync \
     --exclude="*.tmp" \
     --exclude="logs/" \
     --stats \
-    -e "ssh -i $SSH_KEY -o StrictHostKeyChecking=no -o ConnectTimeout=30" \
+    -e "ssh -i $SSH_KEY -p $CPU_PORT -o StrictHostKeyChecking=no -o ConnectTimeout=30" \
     "$GPU_PATH/" \
     "$CPU_USER@$CPU_HOST:$CPU_PATH/" \
     2>> "$LOG_FILE" | tail -5 >> "$LOG_FILE"

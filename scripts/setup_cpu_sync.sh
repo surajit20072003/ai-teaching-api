@@ -12,6 +12,7 @@ set -euo pipefail
 
 CPU_USER="administrator"
 CPU_HOST="116.202.230.124"
+CPU_PORT="81"
 SSH_KEY="/home/administrator/.ssh/cpu_sync"
 CRON_CMD="*/5 * * * * /nvme0n1-disk/nvme01/ai-teaching-api/scripts/sync_to_cpu.sh >> /sdb-disk/ai-teaching/logs/cron.log 2>&1"
 
@@ -30,15 +31,16 @@ fi
 
 # ── Step 2: Copy public key to CPU ──────────────────────────
 echo ""
-echo "[2/4] Copying public key to CPU server ($CPU_HOST)..."
+echo "[2/4] Copying public key to CPU server ($CPU_HOST port $CPU_PORT)..."
 echo "      You will be prompted for the CPU server password."
-ssh-copy-id -i "${SSH_KEY}.pub" "$CPU_USER@$CPU_HOST"
+ssh-copy-id -i "${SSH_KEY}.pub" -p "$CPU_PORT" "$CPU_USER@$CPU_HOST"
 echo "      ✓ Public key installed on CPU"
 
 # ── Step 3: Test SSH connection ──────────────────────────────
 echo ""
 echo "[3/4] Testing passwordless SSH connection..."
 RESULT=$(ssh -i "$SSH_KEY" \
+    -p "$CPU_PORT" \
     -o StrictHostKeyChecking=no \
     -o ConnectTimeout=10 \
     "$CPU_USER@$CPU_HOST" \
