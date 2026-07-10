@@ -12,7 +12,7 @@ set -euo pipefail
 
 CPU_USER="administrator"
 CPU_HOST="116.202.230.124"
-SSH_KEY="/root/.ssh/cpu_sync"
+SSH_KEY="/home/administrator/.ssh/cpu_sync"
 CRON_CMD="*/5 * * * * /nvme0n1-disk/nvme01/ai-teaching-api/scripts/sync_to_cpu.sh >> /sdb-disk/ai-teaching/logs/cron.log 2>&1"
 
 echo "========================================================"
