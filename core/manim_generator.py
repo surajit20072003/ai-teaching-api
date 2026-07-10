@@ -48,6 +48,11 @@ MANIM_MAX_RETRIES    = int(os.getenv("MANIM_MAX_RETRIES",    "3"))
 MANIM_RENDER_TIMEOUT = int(os.getenv("MANIM_RENDER_TIMEOUT", "300"))
 MANIM_QUALITY        = os.getenv("MANIM_QUALITY", "m")   # l=480p, m=720p, h=1080p
 
+# ── OpenRouter (cloud fallback for Manim code gen) ───────────────────────────
+OPENROUTER_API_KEY      = os.getenv("OPENROUTER_API_KEY", "")
+MANIM_OPENROUTER_MODEL  = os.getenv("MANIM_OPENROUTER_MODEL", "deepseek/deepseek-chat")
+OPENROUTER_BASE         = "https://openrouter.ai/api/v1/chat/completions"
+
 # ── Prompt file loader ──────────────────────────────────────────────────────────
 _PROMPT_DIR = Path(__file__).parent / "prompts"
 
@@ -332,8 +337,61 @@ def _validate_runtime_dry(py_code: str, slide_index: int, tmp_dir: str) -> Optio
         return f"DryRun error: {e}"
 
 
-# ── Ollama code generation ───────────────────────────────────────────────────────
-async def generate_manim_code(slide: dict, slide_index: int, audio_duration: float) -> str:
+# ── Provider helpers ─────────────────────────────────────────────────────────
+async def _call_ollama_manim(system: str, prompt: str) -> str:
+    """Call local Ollama for Manim code generation. Returns raw text."""
+    async with httpx.AsyncClient(timeout=OLLAMA_TIMEOUT) as client:
+        resp = await client.post(
+            f"{OLLAMA_URL}/api/generate",
+            json={
+                "model":  MANIM_OLLAMA_MODEL,
+                "system": system,
+                "prompt": prompt,
+                "stream": False,
+                "options": {
+                    "temperature": 0.2,
+                    "num_predict": 6000,
+                    "num_ctx": 16384,
+                },
+            },
+        )
+        resp.raise_for_status()
+        return resp.json().get("response", "")
+
+
+async def _call_openrouter_manim(system: str, prompt: str) -> str:
+    """Call OpenRouter cloud API for Manim code generation. Returns raw text."""
+    if not OPENROUTER_API_KEY:
+        raise RuntimeError("OPENROUTER_API_KEY not set — cannot use OpenRouter provider")
+    async with httpx.AsyncClient(timeout=120) as client:
+        resp = await client.post(
+            OPENROUTER_BASE,
+            headers={
+                "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+                "HTTP-Referer":  "https://ai-teaching-api",
+                "X-Title":       "AI Teaching Manim Generator",
+            },
+            json={
+                "model": MANIM_OPENROUTER_MODEL,
+                "messages": [
+                    {"role": "system", "content": system},
+                    {"role": "user",   "content": prompt},
+                ],
+                "temperature": 0.2,
+                "max_tokens":  6000,
+            },
+        )
+        resp.raise_for_status()
+        return resp.json()["choices"][0]["message"]["content"]
+
+
+# ── Manim code generation (provider-aware) ───────────────────────────────────
+async def generate_manim_code(
+    slide: dict,
+    slide_index: int,
+    audio_duration: float,
+    provider: str = "local",   # "local" | "openrouter"
+) -> str:
     """
     Call Ollama (MANIM_OLLAMA_MODEL, default devstral:24b) to generate Manim code.
     Returns the Python code string. Raises RuntimeError after MAX_RETRIES.
@@ -342,11 +400,12 @@ async def generate_manim_code(slide: dict, slide_index: int, audio_duration: flo
     user_prompt   = _build_user_prompt(slide, audio_duration)
     last_err      = None
     last_code     = ""
+    provider_label = "OpenRouter" if provider == "openrouter" else f"Ollama ({MANIM_OLLAMA_MODEL})"
 
     for attempt in range(1, MANIM_MAX_RETRIES + 1):
         try:
             logger.info(
-                f"[ManimGen] Calling Ollama for slide {slide_index} "
+                f"[ManimGen] Calling {provider_label} for slide {slide_index} "
                 f"(attempt {attempt}/{MANIM_MAX_RETRIES}, duration={audio_duration:.2f}s)"
             )
 
@@ -359,22 +418,11 @@ async def generate_manim_code(slide: dict, slide_index: int, audio_duration: flo
                     error_log=str(last_err)[:1000],
                 )
 
-            async with httpx.AsyncClient(timeout=OLLAMA_TIMEOUT) as client:
-                resp = await client.post(
-                    f"{OLLAMA_URL}/api/generate",
-                    json={
-                        "model":  MANIM_OLLAMA_MODEL,   # dedicated Manim model
-                        "system": system_prompt,
-                        "prompt": prompt,
-                        "stream": False,
-                        "options": {
-                            "temperature": 0.2,
-                            "num_predict": 6000,
-                        },
-                    },
-                )
-                resp.raise_for_status()
-                raw = resp.json().get("response", "")
+            # ── Route to the chosen provider ────────────────────────────────
+            if provider == "openrouter":
+                raw = await _call_openrouter_manim(system_prompt, prompt)
+            else:
+                raw = await _call_ollama_manim(system_prompt, prompt)
 
             code = _clean_python_code(raw)
             last_code = code
@@ -542,6 +590,7 @@ async def generate_and_render_slide_manim(
     subject_id: str,
     audio_duration: float,
     b2_storage=None,
+    provider: str = "local",   # "local" | "openrouter"
 ) -> Optional[dict]:
     """
     Full Manim pipeline for one slide:
@@ -562,7 +611,7 @@ async def generate_and_render_slide_manim(
 
     # ── Step 1: Code gen + validation ────────────────────────────────────────
     try:
-        py_code = await generate_manim_code(slide, slide_index, audio_duration)
+        py_code = await generate_manim_code(slide, slide_index, audio_duration, provider=provider)
     except RuntimeError as e:
         logger.error(f"[ManimGen] Code gen failed for slide {slide_index}: {e}")
         return None

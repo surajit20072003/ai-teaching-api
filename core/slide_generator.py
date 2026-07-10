@@ -141,69 +141,22 @@ def _parse_slides(raw: str) -> dict:
     if len(slides) < 5:
         logger.warning(f"[SlideGen] Only {len(slides)} slides generated — model produced too few. Check prompt/token limit.")
 
-    # ── Smart visual_type assignment ─────────────────────────────────────────
-    # Only slides with step-by-step derivations/proofs get Manim.
-    # Simple formula definitions or concept slides get image.
-    # Max 2 Manim slides per presentation (quality over quantity).
-    MANIM_TRIGGERS = {
-        "derive", "derivation", "proof", "prove",
-        "step by step", "step-by-step", "derive the",
-        "working out", "calculate step", "solve for",
-        "equations of motion", "integrate", "differentiate",
-        "show that", "substitute into", "eliminate",
-    }
-    MAX_MANIM_SLIDES = 2
-
-    def _should_be_manim(slide: dict) -> bool:
-        """Return True only for slides with real mathematical derivations."""
-        if slide.get("isStory") or slide.get("isTips"):
-            return False
-        combined = (
-            (slide.get("title", "") or "") + " " +
-            (slide.get("content", "") or "") + " " +
-            (slide.get("narration", "") or "")
-        ).lower()
-        return any(trigger in combined for trigger in MANIM_TRIGGERS)
-
-    # Pass 1: apply LLM decision but validate it
+    # Ensure visual_type defaults to "image" if not provided
     for slide in slides:
+        if not slide.get("visual_type"):
+            # Force image for story/tips; default to manim if formula present, else image
+            if slide.get("isStory") or slide.get("isTips"):
+                slide["visual_type"] = "image"
+            elif slide.get("formula", "").strip():
+                slide["visual_type"] = "manim"
+            else:
+                slide["visual_type"] = "image"
+        # Safety: story/tips must always be image even if LLM set manim
         if slide.get("isStory") or slide.get("isTips"):
             slide["visual_type"] = "image"
-            continue
-        if not slide.get("visual_type"):
-            slide["visual_type"] = "manim" if _should_be_manim(slide) else "image"
-        # Override: if LLM said manim but it's not a real derivation, downgrade
-        if slide.get("visual_type") == "manim" and not _should_be_manim(slide):
-            slide["visual_type"] = "image"
-
-    # Pass 2: cap total Manim slides at MAX_MANIM_SLIDES
-    # Prioritise slides that score highest (most trigger words)
-    manim_slides = [s for s in slides if s.get("visual_type") == "manim"]
-    if len(manim_slides) > MAX_MANIM_SLIDES:
-        def _score(slide: dict) -> int:
-            combined = (
-                (slide.get("title", "") or "") + " " +
-                (slide.get("narration", "") or "")
-            ).lower()
-            return sum(1 for t in MANIM_TRIGGERS if t in combined)
-        manim_slides.sort(key=_score, reverse=True)
-        # Keep top MAX_MANIM_SLIDES, downgrade the rest
-        to_downgrade = manim_slides[MAX_MANIM_SLIDES:]
-        downgrade_ids = {id(s) for s in to_downgrade}
-        for slide in slides:
-            if id(slide) in downgrade_ids:
-                slide["visual_type"] = "image"
-        logger.info(
-            f"[SlideGen] Capped Manim slides: {len(manim_slides)} → {MAX_MANIM_SLIDES} "
-            f"(downgraded {len(to_downgrade)} slides to image)"
-        )
-
-    n_manim = sum(1 for s in slides if s.get("visual_type") == "manim")
-    logger.info(f"[SlideGen] visual_type summary: manim={n_manim}, image={len(slides)-n_manim}")
 
     data["presentation_slides"] = slides
     return data
-
 
 
 # ── Ollama client ─────────────────────────────────────────────────────────────

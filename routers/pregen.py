@@ -60,9 +60,12 @@ async def start_pregen(
             },
         )
 
-    limit      = int(body.get("limit", 500))
-    topic_id   = body.get("topicId", "").strip() or None
-    chapter_id = body.get("chapterId", "").strip() or None
+    limit          = int(body.get("limit", 500))
+    topic_id       = body.get("topicId", "").strip() or None
+    chapter_id     = body.get("chapterId", "").strip() or None
+    manim_provider = body.get("manim_provider", "local").strip()
+    if manim_provider not in ("local", "openrouter"):
+        manim_provider = "local"
 
     # Count all actionable rows from the single source of truth.
     # 'processing' rows will be reset to 'pending' at batch start (handles restarts).
@@ -139,16 +142,18 @@ async def start_pregen(
 
     # Kick off in background
     background_tasks.add_task(
-        run_pregen_batch, subject_id, AsyncSessionLocal, limit, topic_id, chapter_id
+        run_pregen_batch, subject_id, AsyncSessionLocal, limit, topic_id, chapter_id,
+        manim_provider,
     )
 
     return {
         "message": f"Pre-generation started for {subject_id!r}",
-        "subject_id": subject_id,
-        "topic_id":   topic_id,
-        "chapter_id": chapter_id,
-        "pending_rows": total_pending,
-        "limit": limit,
+        "subject_id":    subject_id,
+        "topic_id":      topic_id,
+        "chapter_id":    chapter_id,
+        "pending_rows":  total_pending,
+        "limit":         limit,
+        "manim_provider": manim_provider,
         "tip": "Poll GET /pregen/status for live progress",
     }
 
@@ -199,6 +204,35 @@ async def pending_count(subject_id: str = "", db: AsyncSession = Depends(get_db)
         }
 
     return {"subject_id": subject_id, "pending": int(total or 0)}
+
+
+# ── GET /pregen/failed-count ──────────────────────────────
+@router.get("/failed-count")
+async def failed_count(subject_id: str = "", db: AsyncSession = Depends(get_db)):
+    """
+    Count rows in teaching_qa_cache with pregen_status='failed'.
+    This reflects the real DB state, unlike /pregen/status which is in-memory and resets on restart.
+    """
+    if subject_id:
+        total = (await db.execute(
+            text("""
+                SELECT COUNT(*) FROM teaching_qa_cache
+                WHERE subject_id = :subj AND pregen_status = 'failed'
+            """),
+            {"subj": subject_id},
+        )).scalar()
+        return {"subject_id": subject_id, "failed": int(total or 0)}
+
+    rows = (await db.execute(text("""
+        SELECT subject_id, COUNT(*) AS cnt
+        FROM teaching_qa_cache
+        WHERE pregen_status = 'failed'
+        GROUP BY subject_id ORDER BY cnt DESC
+    """))).fetchall()
+    return {
+        "total": sum(r.cnt for r in rows),
+        "by_subject": [{"subject_id": r.subject_id, "failed": r.cnt} for r in rows],
+    }
 
 
 # ── POST /pregen/retry-failed ─────────────────────────────

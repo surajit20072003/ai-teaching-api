@@ -69,8 +69,8 @@ async def import_questions(payload: Dict[str, Any], db: AsyncSession = Depends(g
         # Insert using the external id as subject_id; update name if it changes
         await db.execute(
             text("""
-                INSERT INTO subjects (id, subject_id, name, slug)
-                VALUES (gen_random_uuid(), :sid, :name, :slug)
+                INSERT INTO subjects (subject_id, name, slug)
+                VALUES (:sid, :name, :slug)
                 ON CONFLICT (subject_id) DO UPDATE
                   SET name = EXCLUDED.name,
                       slug = COALESCE(EXCLUDED.slug, subjects.slug)

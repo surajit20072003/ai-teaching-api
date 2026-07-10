@@ -186,6 +186,7 @@ class PregenState:
     current_question: str  = ""
     current_step:    str   = ""      # "ollama" | "image:N" | "audio:N" | "manim:N" | "saving"
     phase:           str   = ""      # "text" | "evicting" | "media" | "loading" | "manim" | "saving"
+    manim_provider:  str   = "local" # "local" | "openrouter"
     started_at:      float = 0.0
     last_error:      str   = ""
     log:             List[str] = field(default_factory=list)
@@ -259,6 +260,8 @@ def get_state() -> Dict[str, Any]:
         "failed":           _state.failed,
         "current_question": _state.current_question,
         "current_step":     _state.current_step,
+        "phase":            _state.phase,
+        "manim_provider":   _state.manim_provider,
         "elapsed_seconds":  elapsed,
         "last_error":       _state.last_error,
         "recent_log":       _state.log[-30:],
@@ -282,9 +285,10 @@ async def _voxcpm_tts(text: str, language: str = "hi-IN") -> Optional[bytes]:
         if VOXCPM_API_KEY:
             headers["X-API-Key"] = VOXCPM_API_KEY
 
-        # 1. Submit Job
+        # 1. Submit Job — generous connect+write timeout
+        submit_timeout = httpx.Timeout(connect=10, read=60, write=30, pool=5)
         payload = {"text": text, "emotion": "neutral"}
-        async with httpx.AsyncClient(timeout=10) as client:
+        async with httpx.AsyncClient(timeout=submit_timeout) as client:
             resp = await client.post(
                 f"{VOXCPM_URL}/generate",
                 json=payload,
@@ -297,27 +301,34 @@ async def _voxcpm_tts(text: str, language: str = "hi-IN") -> Optional[bytes]:
                 _log(f"[VoxCPM] No job_id returned: {job_data}")
                 return None
 
-        # 2. Poll Status
+        # 2. Poll Status — short per-request timeout, catch disconnects
         _log(f"[VoxCPM] Job {job_id} submitted. Polling status...")
-        async with httpx.AsyncClient(timeout=1820) as client:
-            for _ in range(360):  # Poll up to 360 * 5s = 1800s (30 min)
+        poll_timeout = httpx.Timeout(connect=10, read=30, write=10, pool=5)
+        async with httpx.AsyncClient(timeout=poll_timeout) as client:
+            for attempt in range(360):  # Poll up to 360 * 5s = 1800s (30 min)
                 await asyncio.sleep(5)
-                stat_resp = await client.get(f"{VOXCPM_URL}/status/{job_id}", headers=headers)
-                if not stat_resp.is_success:
+                try:
+                    stat_resp = await client.get(f"{VOXCPM_URL}/status/{job_id}", headers=headers)
+                    if not stat_resp.is_success:
+                        continue
+                    stat_data = stat_resp.json()
+                    status = stat_data.get("status")
+                    if status == "completed":
+                        break
+                    elif status == "failed":
+                        _log(f"[VoxCPM] Generation failed on GPU: {stat_data.get('error')}")
+                        return None
+                except (httpx.RemoteProtocolError, httpx.ReadError, httpx.ConnectError) as conn_err:
+                    _log(f"[VoxCPM] Poll disconnect (attempt {attempt+1}), retrying in 10s: {conn_err}")
+                    await asyncio.sleep(10)
                     continue
-                stat_data = stat_resp.json()
-                status = stat_data.get("status")
-                if status == "completed":
-                    break
-                elif status == "failed":
-                    _log(f"[VoxCPM] Generation failed on GPU: {stat_data.get('error')}")
-                    return None
             else:
                 _log(f"[VoxCPM] Job {job_id} timed out after 30 min.")
                 return None
 
         # 3. Download Audio
-        async with httpx.AsyncClient(timeout=30) as client:
+        dl_timeout = httpx.Timeout(connect=10, read=60, write=10, pool=5)
+        async with httpx.AsyncClient(timeout=dl_timeout) as client:
             dl_resp = await client.get(f"{VOXCPM_URL}/download/{job_id}", headers=headers)
             dl_resp.raise_for_status()
             return dl_resp.content
@@ -344,11 +355,12 @@ async def _wan2gp_image(prompt: str) -> Optional[bytes]:
             "prompt":       prompt,
             "model":        "flux_dev",
             "resolution":   "1024x1024",
-            "steps":        50,          # Flux Dev default max — sharpest output, fine for background pre-gen
-            "guidance_scale": 7.5,       # stronger prompt adherence (default ~3.5 is too loose)
+            "steps":        50,
+            "guidance_scale": 7.5,
             "seed":         -1
         }
-        async with httpx.AsyncClient(timeout=10) as client:
+        submit_timeout = httpx.Timeout(connect=10, read=60, write=30, pool=5)
+        async with httpx.AsyncClient(timeout=submit_timeout) as client:
             resp = await client.post(
                 f"{WAN2GP_URL}/generate-image",
                 json=payload,
@@ -361,27 +373,34 @@ async def _wan2gp_image(prompt: str) -> Optional[bytes]:
                 _log(f"[Wan2GP] No job_id returned: {job_data}")
                 return None
 
-        # 2. Poll Status
+        # 2. Poll Status — short per-request timeout, catch disconnects
         _log(f"[Wan2GP] Job {job_id} submitted. Polling status...")
-        async with httpx.AsyncClient(timeout=1820) as client:
-            for _ in range(360):  # Poll up to 360 * 5s = 1800s (30 min)
+        poll_timeout = httpx.Timeout(connect=10, read=30, write=10, pool=5)
+        async with httpx.AsyncClient(timeout=poll_timeout) as client:
+            for attempt in range(360):  # Poll up to 360 * 5s = 1800s (30 min)
                 await asyncio.sleep(5)
-                stat_resp = await client.get(f"{WAN2GP_URL}/status/{job_id}", headers=headers)
-                if not stat_resp.is_success:
+                try:
+                    stat_resp = await client.get(f"{WAN2GP_URL}/status/{job_id}", headers=headers)
+                    if not stat_resp.is_success:
+                        continue
+                    stat_data = stat_resp.json()
+                    status = stat_data.get("status")
+                    if status == "completed":
+                        break
+                    elif status == "failed":
+                        _log(f"[Wan2GP] Generation failed: {stat_data.get('error')}")
+                        return None
+                except (httpx.RemoteProtocolError, httpx.ReadError, httpx.ConnectError) as conn_err:
+                    _log(f"[Wan2GP] Poll disconnect (attempt {attempt+1}), retrying in 10s: {conn_err}")
+                    await asyncio.sleep(10)
                     continue
-                stat_data = stat_resp.json()
-                status = stat_data.get("status")
-                if status == "completed":
-                    break
-                elif status == "failed":
-                    _log(f"[Wan2GP] Generation failed: {stat_data.get('error')}")
-                    return None
             else:
                 _log(f"[Wan2GP] Job {job_id} timed out after 30 min.")
                 return None
 
         # 3. Download Image
-        async with httpx.AsyncClient(timeout=30) as client:
+        dl_timeout = httpx.Timeout(connect=10, read=60, write=10, pool=5)
+        async with httpx.AsyncClient(timeout=dl_timeout) as client:
             dl_resp = await client.get(f"{WAN2GP_URL}/download-image/{job_id}", headers=headers)
             dl_resp.raise_for_status()
             return dl_resp.content
@@ -429,7 +448,7 @@ async def _process_slide(idx: int, slide: dict, cache_id: str, language: str, su
     # Each attempt: run both concurrently. If one fails, the 15s wait gives the
     # GPU time to recover before the next attempt. Catches ~90% of GPU timeouts.
     _INLINE_RETRIES = 2
-    _RETRY_WAIT_S   = 15
+    _RETRY_WAIT_S   = 60   # 1 min — gives GPU time to drain 7-job queue
 
     for attempt in range(1, _INLINE_RETRIES + 2):   # attempts: 1, 2, 3
         needs_img = _needs_image(slide)
@@ -578,47 +597,71 @@ async def _pregen_text_only(
 async def _pregen_media_only(
     row: Dict[str, Any],
     slides: list,
+    only_indices: set | None = None,
 ) -> tuple:
     """
-    Phase B: generate images + audio for every slide in parallel.
-    Returns (enriched_slides, audio_url_list, total_duration, audio_durations, image_urls_map).
+    Phase B: generate images + audio for slides in parallel.
+    If only_indices is provided, only re-generates those specific slide indices
+    and carries over already-complete data from the existing slides for all others.
     Ollama MUST be evicted before calling this.
+    Returns (enriched_slides, audio_url_list, total_duration, audio_durations, image_urls_map).
     """
     cache_id = str(row["id"])
     language = row.get("language") or "en-IN"
     subject  = row.get("subject_id") or "General"
 
-    _log(f"[Pregen-B] {cache_id[:8]}: launching image+audio for {len(slides)} slides...")
+    indices_to_process = only_indices if only_indices is not None else set(range(len(slides)))
+    _log(f"[Pregen-B] {cache_id[:8]}: launching image+audio for "
+         f"{len(indices_to_process)}/{len(slides)} slides...")
 
-    slide_results = await asyncio.gather(
-        *[_process_slide(idx, slide, cache_id, language, subject)
-          for idx, slide in enumerate(slides)],
-        return_exceptions=True,
-    )
+    # Run only the slides that actually need generation
+    tasks = [
+        _process_slide(idx, slides[idx], cache_id, language, subject)
+        for idx in sorted(indices_to_process)
+    ]
+    task_results = await asyncio.gather(*tasks, return_exceptions=True)
 
-    enriched_slides  = list(slides)  # copy
+    # Map results back to their original slide index
+    result_by_idx = {
+        idx: task_results[i]
+        for i, idx in enumerate(sorted(indices_to_process))
+    }
+
+    enriched_slides  = list(slides)  # copy — preserves already-complete slides
     audio_url_list:  list  = []
     audio_durations: dict  = {}
     image_urls_map:  dict  = {}
     total_duration   = 0.0
 
-    for idx, result in enumerate(slide_results):
-        if isinstance(result, Exception):
-            _log(f"[Pregen-B] {cache_id[:8]} slide {idx+1}: _process_slide error — {result}")
-            continue
-        enriched_slide, duration = result
-        enriched_slides[idx] = enriched_slide
-        total_duration += duration
-        if duration > 0:
-            audio_durations[idx] = duration
-        if enriched_slide.get("audioUrl"):
+    for idx, slide in enumerate(enriched_slides):
+        if idx in result_by_idx:
+            result = result_by_idx[idx]
+            if isinstance(result, Exception):
+                _log(f"[Pregen-B] {cache_id[:8]} slide {idx+1}: _process_slide error — {result}")
+                # Keep the original slide data even if this one failed
+            else:
+                enriched_slide, duration = result
+                enriched_slides[idx] = enriched_slide
+                slide = enriched_slide
+                if duration > 0:
+                    total_duration += duration
+                    audio_durations[idx] = duration
+        else:
+            # Slide was already complete — carry over existing data
+            duration = slide.get("duration", 0)
+            if duration > 0:
+                total_duration += duration
+                audio_durations[idx] = duration
+
+        # Build output lists from the final (possibly carried-over) slide data
+        if (slide.get("audioUrl") or "").startswith("http"):
             audio_url_list.append({
                 "slideIndex": idx,
-                "audioUrl":   enriched_slide["audioUrl"],
-                "duration":   duration,
+                "audioUrl":   slide["audioUrl"],
+                "duration":   slide.get("duration", 0),
             })
-        if enriched_slide.get("infographicUrl"):
-            image_urls_map[str(idx)] = {"url": enriched_slide["infographicUrl"]}
+        if (slide.get("infographicUrl") or "").startswith("http"):
+            image_urls_map[str(idx)] = {"url": slide["infographicUrl"]}
 
     return enriched_slides, audio_url_list, total_duration, audio_durations, image_urls_map
 
@@ -627,6 +670,7 @@ async def _pregen_manim_only(
     row: Dict[str, Any],
     slides: list,
     audio_durations: dict,
+    provider: str = "local",   # "local" | "openrouter"
 ) -> dict:
     """
     Phase C: generate Manim videos for slides with visual_type='manim'.
@@ -655,6 +699,7 @@ async def _pregen_manim_only(
                 cache_id       = cache_id,
                 subject_id     = subject,
                 audio_duration = audio_durations[idx],
+                provider       = provider,
             )
             if result:
                 local_mp4 = result.get("local_mp4") or ""
@@ -1007,11 +1052,12 @@ async def _pregen_one(row: Dict[str, Any], db: AsyncSession) -> None:
 
 # ── Batch runner ──────────────────────────────────────────────────────────────
 async def run_pregen_batch(
-    subject_id:  str,
+    subject_id:      str,
     db_factory,
-    limit:       int = 500,
-    topic_id:    str = None,
-    chapter_id:  str = None,
+    limit:           int = 500,
+    topic_id:        str = None,
+    chapter_id:      str = None,
+    manim_provider:  str = "local",  # "local" | "openrouter"
 ) -> None:
     """
     Background batch job — single unified queue.
@@ -1029,8 +1075,9 @@ async def run_pregen_batch(
         subject_id     = subject_id,
         started_at     = time.time(),
         phase          = "text",
+        manim_provider = manim_provider,
     )
-    _log(f"[Pregen] ══ Batch started: subject={subject_id} topic={topic_id} chapter={chapter_id} limit={limit} ══")
+    _log(f"[Pregen] ══ Batch started: subject={subject_id} topic={topic_id} chapter={chapter_id} limit={limit} manim_provider={manim_provider} ══")
 
     # ── Phase 1 gate: ensure Ollama model is loaded before text generation ────
     _state.phase = "text"
@@ -1261,13 +1308,17 @@ async def run_pregen_batch(
         )
 
         if manim_rows_needed:
-            _log("[Pregen] ══ Phase C: reloading Ollama for Manim generation ══")
-            try:
-                ready = await prepare_for_manim_generation()
-                _log(f"[Pregen] Phase C: Ollama {'loaded ✓' if ready else 'load timed out — Manim skipped'}")
-            except Exception as e:
-                _log(f"[Pregen] Phase C Ollama load failed (non-fatal): {e}")
-                ready = False
+            if manim_provider == "openrouter":
+                _log("[Pregen] ══ Phase C: using OpenRouter (cloud) for Manim ══")
+                ready = True   # No local Ollama load needed
+            else:
+                _log("[Pregen] ══ Phase C: reloading Ollama for Manim generation ══")
+                try:
+                    ready = await prepare_for_manim_generation()
+                    _log(f"[Pregen] Phase C: Ollama {'loaded ✓' if ready else 'load timed out — Manim skipped'}")
+                except Exception as e:
+                    _log(f"[Pregen] Phase C Ollama load failed (non-fatal): {e}")
+                    ready = False
         else:
             _log("[Pregen] ══ Phase C: no manim slides — skipping ══")
             ready = False
@@ -1288,7 +1339,8 @@ async def run_pregen_batch(
             if ready:
                 try:
                     manim_video_urls = await _pregen_manim_only(
-                        row_dict, enriched_slides, audio_durations
+                        row_dict, enriched_slides, audio_durations,
+                        provider=manim_provider,
                     )
                     if manim_video_urls:
                         _log(f"[Pregen-C] ✓ manim: {cache_id[:8]} "
@@ -1391,7 +1443,7 @@ async def retry_media_for_rows(subject_id: str, db_factory) -> None:
         # ── Resolve subject name ──────────────────────────────────────────────
         async with db_factory() as db:
             name_row = (await db.execute(
-                text("SELECT name FROM subjects WHERE id = CAST(:subj AS uuid) LIMIT 1"),
+                text("SELECT name FROM subjects WHERE subject_id = :subj LIMIT 1"),
                 {"subj": subject_id},
             )).fetchone()
         subject_name = name_row.name if name_row else subject_id
@@ -1425,6 +1477,20 @@ async def retry_media_for_rows(subject_id: str, db_factory) -> None:
                                 COALESCE(presentation_slides,'[]'::jsonb)) s
                               WHERE (s->>'audioUrl') IS NULL
                                  OR (s->>'audioUrl') = ''
+                            )
+                            OR EXISTS(
+                              SELECT 1
+                              FROM jsonb_array_elements(
+                                COALESCE(presentation_slides,'[]'::jsonb)
+                              ) WITH ORDINALITY AS t(s, pos)
+                              WHERE (t.s->>'visual_type') = 'manim'
+                                AND (
+                                  manim_video_urls IS NULL
+                                  OR NOT (manim_video_urls ? ((t.pos - 1)::text))
+                                  OR COALESCE(
+                                    manim_video_urls->((t.pos - 1)::text)->>'url', ''
+                                  ) = ''
+                                )
                             )
                           )
                         )
@@ -1507,17 +1573,18 @@ async def retry_media_for_rows(subject_id: str, db_factory) -> None:
             language = row_dict.get("language") or "en-IN"
             row_dict["subject_id"] = subject_name
 
-            # Check whether image/audio is actually missing
-            needs_img = any(
-                not (s.get("infographicUrl") or "").startswith("http")
-                for s in slides
-            )
-            needs_aud = any(
-                not (s.get("audioUrl") or "").startswith("http")
-                for s in slides
-            )
+            # Identify WHICH specific slides are missing image or audio
+            slides_missing_img = {
+                i for i, s in enumerate(slides)
+                if not (s.get("infographicUrl") or "").startswith("http")
+            }
+            slides_missing_aud = {
+                i for i, s in enumerate(slides)
+                if not (s.get("audioUrl") or "").startswith("http")
+            }
+            missing_indices = slides_missing_img | slides_missing_aud
 
-            if not needs_img and not needs_aud:
+            if not missing_indices:
                 # Media complete — still push to Phase C for Manim check
                 row_dict["_enriched_slides"]  = slides
                 row_dict["_audio_url_list"]   = [
@@ -1544,9 +1611,12 @@ async def retry_media_for_rows(subject_id: str, db_factory) -> None:
                 _log(f"[Retry-B] {cache_id[:8]}: media already complete — forwarding to Phase C")
                 continue
 
+            _log(f"[Retry-B] {cache_id[:8]}: {len(missing_indices)}/{len(slides)} slides need media "
+                 f"(img={len(slides_missing_img)} aud={len(slides_missing_aud)})")
             try:
+                # Pass only_indices so already-complete slides are NOT re-generated
                 enriched_slides, audio_url_list, total_duration, audio_durations, image_urls_map = \
-                    await _pregen_media_only(row_dict, slides)
+                    await _pregen_media_only(row_dict, slides, only_indices=missing_indices)
                 row_dict["_enriched_slides"]  = enriched_slides
                 row_dict["_audio_url_list"]   = audio_url_list
                 row_dict["_total_duration"]   = total_duration
