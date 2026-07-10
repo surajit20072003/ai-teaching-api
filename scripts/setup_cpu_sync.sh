@@ -10,7 +10,7 @@
 
 set -euo pipefail
 
-CPU_USER="administrator"
+CPU_USER="root"
 CPU_HOST="116.202.230.124"
 CPU_PORT="81"
 SSH_KEY="/home/administrator/.ssh/cpu_sync"
@@ -29,28 +29,34 @@ else
     echo "      ✓ Key generated"
 fi
 
-# ── Step 2: Copy public key to CPU ──────────────────────────
+# ── Step 2: Test SSH connection ──────────────────────────────
 echo ""
-echo "[2/4] Copying public key to CPU server ($CPU_HOST port $CPU_PORT)..."
-echo "      You will be prompted for the CPU server password."
-ssh-copy-id -i "${SSH_KEY}.pub" -p "$CPU_PORT" "$CPU_USER@$CPU_HOST"
-echo "      ✓ Public key installed on CPU"
-
-# ── Step 3: Test SSH connection ──────────────────────────────
-echo ""
-echo "[3/4] Testing passwordless SSH connection..."
-RESULT=$(ssh -i "$SSH_KEY" \
-    -p "$CPU_PORT" \
-    -o StrictHostKeyChecking=no \
-    -o ConnectTimeout=10 \
-    "$CPU_USER@$CPU_HOST" \
-    echo "ssh_ok")
-
-if [ "$RESULT" = "ssh_ok" ]; then
-    echo "      ✓ SSH connection working (no password needed)"
+echo "[2/4] Testing passwordless SSH connection..."
+if ssh -i "$SSH_KEY" -p "$CPU_PORT" -o StrictHostKeyChecking=no -o PasswordAuthentication=no -o ConnectTimeout=5 "$CPU_USER@$CPU_HOST" echo "ssh_ok" >/dev/null 2>&1; then
+    echo "      ✓ SSH connection already working (no password needed)"
+    SKIP_COPY=true
 else
-    echo "      ✗ SSH test failed — check CPU server access"
-    exit 1
+    echo "      ! Passwordless login not working yet."
+    SKIP_COPY=false
+fi
+
+# ── Step 3: Copy public key to CPU (if needed) ───────────────
+echo ""
+if [ "$SKIP_COPY" = true ]; then
+    echo "[3/4] Skipping key copy (already works)"
+else
+    echo "[3/4] Copying public key to CPU server ($CPU_HOST port $CPU_PORT)..."
+    echo "      You will be prompted for the CPU server password."
+    ssh-copy-id -i "${SSH_KEY}.pub" -p "$CPU_PORT" "$CPU_USER@$CPU_HOST"
+    echo "      ✓ Public key installed on CPU"
+    
+    # Test again
+    if ssh -i "$SSH_KEY" -p "$CPU_PORT" -o StrictHostKeyChecking=no -o PasswordAuthentication=no -o ConnectTimeout=5 "$CPU_USER@$CPU_HOST" echo "ssh_ok" >/dev/null 2>&1; then
+        echo "      ✓ SSH connection now working"
+    else
+        echo "      ✗ SSH test failed — check CPU server access"
+        exit 1
+    fi
 fi
 
 # ── Step 4: Install cron job ─────────────────────────────────

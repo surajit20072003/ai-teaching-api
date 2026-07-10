@@ -59,7 +59,7 @@ async def embed_async(text: str) -> list[float]:
     so it doesn't block the FastAPI event loop during embedding.
     Safe to call from any async endpoint.
     """
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, embed_text, text)
 
 

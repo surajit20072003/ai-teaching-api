@@ -12,7 +12,7 @@
 set -euo pipefail
 
 # ── Config ──────────────────────────────────────────────────
-CPU_USER="administrator"
+CPU_USER="root"
 CPU_HOST="116.202.230.124"
 CPU_PORT="81"
 CPU_PATH="/home2/ai-teaching-api/storage"   # host path on CPU (maps to /app/storage in Docker)

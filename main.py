@@ -366,7 +366,7 @@ async def save_presentation_audio(body: dict, db: AsyncSession = Depends(get_db)
     try:
         await db.execute(
             update(TeachingCache)
-            .where(TeachingCache.id == cache_id)
+            .where(TeachingCache.id == uuid.UUID(cache_id))  # Bug #8 fix: explicit UUID cast
             .values(
                 slide_audio_urls={"language": language, "urls": audio_urls},
                 total_duration_seconds=round(total_dur, 2),
@@ -457,6 +457,11 @@ async def teaching_assistant(body: dict, db: AsyncSession = Depends(get_db)):
         await sync_cache_row_to_local(subject_id, str(row.id), data, language, db)
         return data
     print(f"[L3] ✗ MISS")
+
+    # Bug #7 fix: initialize query_vec to None so the L5 block always has
+    # a defined name, even if the L4 try-block raises before assigning it.
+    query_vec: list | None = None
+    vec_str = ""
 
     # [L4] Semantic search + LLM-as-Judge (single LLM call for up to 5 candidates)
     print(f"[L4] Starting semantic search for '{question[:50]}'")
@@ -551,7 +556,7 @@ async def teaching_assistant(body: dict, db: AsyncSession = Depends(get_db)):
     }
 
     try:
-        if not query_vec:  # may already be computed from L4
+        if query_vec is None:  # Bug #14 fix: explicit None check (was: if not query_vec)
             query_vec = await embed_async(question)
             vec_str   = vec_to_pg_str(query_vec)
 

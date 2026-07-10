@@ -680,25 +680,41 @@ async def _pregen_manim_only(
     cache_id = str(row["id"])
     subject  = row.get("subject_id") or "General"
 
+    # Bug #11 fix: do NOT filter by `idx in audio_durations`.
+    # If audio generation failed or returned duration=0, the Manim slide was
+    # silently skipped even though it could still render a useful animation.
+    # Use a 10s default duration when the real audio duration is unknown.
+    _DEFAULT_MANIM_DURATION = 10.0
     manim_slides = [
         (idx, slides[idx])
         for idx in range(len(slides))
-        if slides[idx].get("visual_type") == "manim" and idx in audio_durations
+        if slides[idx].get("visual_type") == "manim"
     ]
     if not manim_slides:
         return {}
+
+    # Bug #4 fix: load existing Manim URLs from the DB row so we can skip
+    # slides that already rendered successfully on a previous pass.
+    existing_manim = dict(row.get("manim_video_urls") or {})
 
     _log(f"[Pregen-C] {cache_id[:8]}: Manim for {len(manim_slides)} formula slides...")
     manim_video_urls: dict = {}
 
     for idx, slide in manim_slides:
+        # Skip if this slide already has a valid URL
+        existing_entry = existing_manim.get(str(idx), {})
+        if (existing_entry or {}).get("url", "").startswith("http"):
+            _log(f"[Pregen-C] {cache_id[:8]} slide {idx+1}: Manim already done — skipping")
+            manim_video_urls[str(idx)] = existing_entry
+            continue
+
         try:
             result = await generate_and_render_slide_manim(
                 slide          = slide,
                 slide_index    = idx,
                 cache_id       = cache_id,
                 subject_id     = subject,
-                audio_duration = audio_durations[idx],
+                audio_duration = audio_durations.get(idx, _DEFAULT_MANIM_DURATION),  # Bug #11: fallback
                 provider       = provider,
             )
             if result:
@@ -1573,7 +1589,26 @@ async def retry_media_for_rows(subject_id: str, db_factory) -> None:
             language = row_dict.get("language") or "en-IN"
             row_dict["subject_id"] = subject_name
 
-            # Identify WHICH specific slides are missing image or audio
+            # Bug #13 fix: hydrate slides from the separate DB columns before
+            # checking which indices need re-generation.  Without this, slides
+            # whose URLs are in image_urls / slide_audio_urls but NOT embedded
+            # in the JSONB slide object itself would be wrongly re-generated.
+            db_image_urls = dict(row_dict.get("image_urls") or {})
+            db_audio_urls_list = (row_dict.get("slide_audio_urls") or {}).get("urls", [])
+            db_audio_by_idx = {entry["slideIndex"]: entry for entry in db_audio_urls_list if "slideIndex" in entry}
+
+            for i, slide in enumerate(slides):
+                if not (slide.get("infographicUrl") or "").startswith("http"):
+                    db_img = db_image_urls.get(str(i), {}).get("url", "")
+                    if db_img.startswith("http"):
+                        slide["infographicUrl"] = db_img
+                if not (slide.get("audioUrl") or "").startswith("http"):
+                    db_aud = db_audio_by_idx.get(i, {})
+                    if (db_aud.get("audioUrl") or "").startswith("http"):
+                        slide["audioUrl"] = db_aud["audioUrl"]
+                        slide["duration"] = db_aud.get("duration", slide.get("duration", 0))
+
+            # Identify WHICH specific slides are missing image or audio (after hydration)
             slides_missing_img = {
                 i for i, s in enumerate(slides)
                 if not (s.get("infographicUrl") or "").startswith("http")
@@ -1681,6 +1716,12 @@ async def retry_media_for_rows(subject_id: str, db_factory) -> None:
                     except Exception as e:
                         _log(f"[Retry-C] manim failed {cache_id[:8]} (non-fatal): {e}")
 
+            # Bug #3 fix: if we didn't generate any new Manim videos (Ollama not ready,
+            # no manim slides, or generation failed), preserve the existing URLs from the
+            # DB fetch instead of overwriting them with an empty dict.
+            if not manim_video_urls:
+                manim_video_urls = dict(row_dict.get("manim_video_urls") or {})
+
             # Save
             try:
                 async with db_factory() as db:
@@ -1741,8 +1782,8 @@ async def predict_questions(doc_id: str, subject_id: str, chunk_texts: list[str]
     Insert them into teaching_qa_cache with status='pending'.
     Returns the number of questions generated.
     """
-    import hashlib
     from core.slide_generator import OLLAMA_URL, OLLAMA_MODEL
+    from core.cache import hash_question as _hash_question
     
     context = "\n".join(chunk_texts)[:8000]
 
@@ -1781,7 +1822,7 @@ DOCUMENT CONTENT:
     count = 0
     async with async_session_maker() as db:
         for q in questions[:20]:
-            q_hash = hashlib.md5(q.lower().strip().encode()).hexdigest()
+            q_hash = _hash_question(q)  # SHA-256 — matches main.py / cache.py
             new_id = str(uuid.uuid4())
             try:
                 await db.execute(

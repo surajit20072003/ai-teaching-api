@@ -134,8 +134,8 @@ async def wait_for_eviction(timeout: int = OLLAMA_EVICT_TIMEOUT) -> bool:
     Poll /api/ps until no models remain in VRAM (or timeout expires).
     Returns True if VRAM cleared, False if timeout.
     """
-    deadline = asyncio.get_event_loop().time() + timeout
-    while asyncio.get_event_loop().time() < deadline:
+    deadline = asyncio.get_running_loop().time() + timeout
+    while asyncio.get_running_loop().time() < deadline:
         loaded = await get_loaded_models()
         if not loaded:
             return True
@@ -188,8 +188,8 @@ async def ensure_model_loaded(
 
 async def _poll_until_loaded(model_name: str, timeout: int) -> bool:
     """Poll /api/ps every 3 seconds until model_name appears or timeout."""
-    deadline = asyncio.get_event_loop().time() + timeout
-    while asyncio.get_event_loop().time() < deadline:
+    deadline = asyncio.get_running_loop().time() + timeout
+    while asyncio.get_running_loop().time() < deadline:
         if await is_model_loaded(model_name):
             return True
         await asyncio.sleep(3)

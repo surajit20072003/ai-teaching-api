@@ -115,6 +115,6 @@ async def synthesize(text: str, language_code: str = "en-IN", gender: str = "mal
         return base64.b64encode(audio_parts[0]).decode()
 
     # Merge multiple WAV chunks via ffmpeg
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     merged = await loop.run_in_executor(None, _merge_wav_sync, audio_parts)
     return base64.b64encode(merged).decode()

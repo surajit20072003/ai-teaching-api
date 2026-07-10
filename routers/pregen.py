@@ -276,7 +276,8 @@ async def retry_failed(body: dict, db: AsyncSession = Depends(get_db)):
 # ── POST /pregen/add-question ─────────────────────────────
 @router.post("/add-question")
 async def add_question(body: dict, db: AsyncSession = Depends(get_db)):
-    import uuid, hashlib
+    import uuid
+    from core.cache import hash_question
     subject_id = body.get("subjectId", "").strip()
     question = body.get("question", "").strip()
 
@@ -286,7 +287,7 @@ async def add_question(body: dict, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=400, detail="question is required")
 
     new_id = str(uuid.uuid4())
-    q_hash = hashlib.md5(question.lower().strip().encode()).hexdigest()
+    q_hash = hash_question(question)  # SHA-256 — matches main.py / cache.py
 
     await db.execute(
         text("""
@@ -347,17 +348,33 @@ async def trigger_retry_media(
         text("""
             SELECT COUNT(*) FROM teaching_qa_cache
             WHERE subject_id = :subj
-              AND pregen_status = 'done'
               AND (
-                jsonb_array_length(COALESCE(presentation_slides, '[]'::jsonb)) = 0
-                OR jsonb_array_length(COALESCE(slide_audio_urls->'urls', '[]'::jsonb)) = 0
-                OR EXISTS(
-                    SELECT 1 FROM jsonb_array_elements(COALESCE(presentation_slides,'[]'::jsonb)) s
-                    WHERE (s->>'infographicUrl') IS NULL OR (s->>'infographicUrl') = ''
-                )
-                OR EXISTS(
-                    SELECT 1 FROM jsonb_array_elements(COALESCE(presentation_slides,'[]'::jsonb)) s
-                    WHERE (s->>'audioUrl') IS NULL OR (s->>'audioUrl') = ''
+                pregen_status IN ('failed', 'pending')
+                OR (
+                  pregen_status = 'done'
+                  AND (
+                    jsonb_array_length(COALESCE(presentation_slides, '[]'::jsonb)) = 0
+                    OR jsonb_array_length(COALESCE(slide_audio_urls->'urls', '[]'::jsonb)) = 0
+                    OR EXISTS(
+                        SELECT 1 FROM jsonb_array_elements(COALESCE(presentation_slides,'[]'::jsonb)) s
+                        WHERE (s->>'infographicUrl') IS NULL OR (s->>'infographicUrl') = ''
+                    )
+                    OR EXISTS(
+                        SELECT 1 FROM jsonb_array_elements(COALESCE(presentation_slides,'[]'::jsonb)) s
+                        WHERE (s->>'audioUrl') IS NULL OR (s->>'audioUrl') = ''
+                    )
+                    OR EXISTS(
+                        SELECT 1
+                        FROM jsonb_array_elements(COALESCE(presentation_slides,'[]'::jsonb))
+                          WITH ORDINALITY AS t(s, pos)
+                        WHERE (t.s->>'visual_type') = 'manim'
+                          AND (
+                            manim_video_urls IS NULL
+                            OR NOT (manim_video_urls ? ((t.pos - 1)::text))
+                            OR COALESCE(manim_video_urls->((t.pos - 1)::text)->>'url', '') = ''
+                          )
+                    )
+                  )
                 )
               )
         """),
