@@ -14,6 +14,10 @@ Endpoints:
 from __future__ import annotations
 
 import asyncio
+import os
+
+# True on CPU server — disables GPU-only endpoints
+_IS_CPU = os.getenv("IS_CPU_SERVER", "false").lower() == "true"
 
 from fastapi import APIRouter, Depends, BackgroundTasks, HTTPException
 from fastapi.responses import JSONResponse
@@ -44,6 +48,12 @@ async def start_pregen(
         subjectId  (required) — subject to pre-generate
         limit      (optional, default 500) — max rows to process
     """
+    if _IS_CPU:
+        raise HTTPException(
+            status_code=503,
+            detail="Pre-generation runs on GPU server only. This is the CPU server.",
+        )
+
     subject_id = body.get("subjectId", "").strip()
     if not subject_id:
         raise HTTPException(status_code=400, detail="subjectId is required")
@@ -309,6 +319,12 @@ async def trigger_retry_media(
     Body:
         subjectId (required) — subject to audit and fix
     """
+    if _IS_CPU:
+        raise HTTPException(
+            status_code=503,
+            detail="Media retry runs on GPU server only. This is the CPU server.",
+        )
+
     subject_id = body.get("subjectId", "").strip()
     if not subject_id:
         raise HTTPException(status_code=400, detail="subjectId is required")

@@ -1,0 +1,74 @@
+version: "3.9"
+
+services:
+
+  # ── FastAPI Backend ──────────────────────────────────────────────
+  api:
+    build: .
+    container_name: ai-teaching-api
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./migrations:/app/migrations
+      - .:/app
+      - ./storage:/app/storage
+      # NO /sdb-disk mount — CPU server has no 6.9TB GPU disk
+      # NO extra_hosts  — no Ollama/Wan2GP/VoxCPM on this server
+    restart: unless-stopped
+    command: bash -c "python migrate.py && uvicorn main:app --host 0.0.0.0 --port 8000 --workers 16 --timeout-keep-alive 300 --backlog 2048"
+
+  # ── PostgreSQL + pgvector ────────────────────────────────────────
+  postgres:
+    image: pgvector/pgvector:pg16          # same image as GPU — pgvector already included
+    container_name: ai-teaching-postgres
+    environment:
+      POSTGRES_USER: teaching_user
+      POSTGRES_PASSWORD: teaching_pass
+      POSTGRES_DB: teaching_db
+    ports:
+      - "5433:5432"                        # exposed so GPU can push WAL replication here
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U teaching_user -d teaching_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  # ── Redis ────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: ai-teaching-redis
+    ports:
+      - "6381:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes --maxmemory 4gb --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  # ── Adminer (optional DB GUI — port 8085) ───────────────────────
+  adminer:
+    image: adminer
+    container_name: ai-teaching-adminer
+    restart: unless-stopped
+    ports:
+      - "8085:8080"
+    depends_on:
+      - postgres
+
+volumes:
+  postgres_data:
+  redis_data:

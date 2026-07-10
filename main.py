@@ -112,7 +112,12 @@ async def serve_pregen_dashboard():
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "version": "2.0.0"}
+    _is_cpu = os.getenv("IS_CPU_SERVER", "false").lower() == "true"
+    return {
+        "status": "ok",
+        "version": "2.0.0",
+        "role": "cpu_student_server" if _is_cpu else "gpu_pregen_factory",
+    }
 
 
 # ─────────────────────────────────────────────────────────
@@ -594,7 +599,8 @@ async def teaching_assistant(body: dict, db: AsyncSession = Depends(get_db)):
 
     total_duration = sum(a.get("duration", 0) for a in audios if a)
 
-    # Save to Postgres — set is_doc_grounded if generated from document RAG (7.8)
+    # Save to Postgres — set is_doc_grounded if generated from document RAG
+    # Tag as realtime so GPU enrichment queue can pick this up for Wan2GP/VoxCPM upgrade
     new_row = TeachingCache(
         id=uuid.UUID(cache_id),
         question_hash=q_hash,
@@ -608,6 +614,8 @@ async def teaching_assistant(body: dict, db: AsyncSession = Depends(get_db)):
         total_duration_seconds=total_duration,
         is_doc_grounded=is_doc_grounded,
         pregen_status="done",
+        realtime_generated=True,   # CPU real-time path
+        realtime_tier=2,           # tier 2 = OpenRouter + Sarvam (CPU cloud APIs)
     )
     db.add(new_row)
     await db.commit()
