@@ -1,0 +1,41 @@
+version: "3.9"
+
+# GPU Server compose — stateless worker, no local Postgres or Redis
+# DATABASE_URL in .env must point to CPU master: 116.202.230.124:5433
+# Run with: docker compose -f docker-compose.gpu.yml up -d --build
+
+services:
+
+  # ── FastAPI Backend (GPU Worker — pregen only) ───────────────────
+  api:
+    build: .
+    container_name: ai-teaching-api
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    # No depends_on — Postgres and Redis live on CPU server
+    volumes:
+      - ./migrations:/app/migrations
+      - .:/app
+      - /sdb-disk/ai-teaching:/sdb-disk/ai-teaching   # 6.9TB local staging for pregen media
+    environment:
+      - VOXCPM_URL=http://host.docker.internal:7861    # local TTS for pre-gen
+      - VOXCPM_API_KEY=spassword                       # VoxCPM auth key
+      - WAN2GP_URL=http://host.docker.internal:9090    # local image + video for pre-gen
+      - WAN2GP_API_KEY=mypassword1234                  # Wan2GP auth key
+      - OLLAMA_URL=http://host.docker.internal:11434   # local Ollama for slide + Manim generation
+      - OLLAMA_MODEL=qwen3-coder:latest                # slides: fast code + reasoning
+      - MANIM_OLLAMA_MODEL=devstral:24b                # Manim code: #1 OSS SWE-Bench model
+      - OLLAMA_TIMEOUT=900                             # 15 min — larger models are slower
+      - OLLAMA_EVICT_TIMEOUT=30                        # seconds to wait for VRAM eviction confirm
+      - MANIM_MAX_RETRIES=3                            # Manim code-gen retries on bad output
+      - MANIM_RENDER_TIMEOUT=300                       # seconds for manim CLI subprocess
+    extra_hosts:
+      - "host.docker.internal:host-gateway"            # allow container to reach Ollama/Wan2GP/VoxCPM on host
+    restart: unless-stopped
+    # NOTE: No "python migrate.py" — migrations run on CPU server only
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --workers 4 --timeout-keep-alive 300
+
+  # Postgres, Redis, Adminer → live on CPU server only
+  # GPU is a stateless compute worker — all data lives on CPU
