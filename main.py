@@ -19,6 +19,7 @@ from core.b2_client import upload_to_b2
 from core.embeddings import embed_async, vec_to_pg_str
 from core.semantic_check import llm_same_topic
 from core.local_storage import ensure_base_dirs, read_slide_cache, write_slide_cache, write_audio
+from core.local_sync import sync_cache_row_to_local
 from core.llm_judge import judge_and_pick
 from routers.documents import router as documents_router
 from routers.pregen import router as pregen_router
@@ -452,6 +453,8 @@ async def teaching_assistant(body: dict, db: AsyncSession = Depends(get_db)):
         }
         await set_to_cache(q_hash, subject_id, data)
         await write_slide_cache(subject_id, q_hash, data)
+        # Background: download B2 media to CPU /app/storage/ if not already local
+        await sync_cache_row_to_local(subject_id, str(row.id), data, language, db)
         return data
     print(f"[L3] ✗ MISS")
 
@@ -503,6 +506,8 @@ async def teaching_assistant(body: dict, db: AsyncSession = Depends(get_db)):
                 data = winner["answer_data"]
                 await set_to_cache(q_hash, subject_id, data)
                 await write_slide_cache(subject_id, q_hash, data)
+                # Background: download B2 media to CPU /app/storage/ if not already local
+                await sync_cache_row_to_local(subject_id, data["cache_id"], data, language, db)
                 return data
             print(f"[L4] LLM Judge said NEW — no close match")
         else:
@@ -638,6 +643,25 @@ async def teaching_assistant(body: dict, db: AsyncSession = Depends(get_db)):
     # Warm L1 + L2 caches
     await set_to_cache(q_hash, subject_id, result_data)
     await write_slide_cache(subject_id, q_hash, result_data)
+
+    # Save local audio paths to Postgres (real-time files already on CPU disk)
+    if audios and subject_id:
+        local_audio_paths = {}
+        for a in audios:
+            idx = a.get("slideIndex", 0)
+            from core.local_storage import get_audio_path
+            lp = get_audio_path(subject_id, cache_id, language, idx)
+            if os.path.exists(lp):
+                local_audio_paths[str(idx)] = lp
+        if local_audio_paths:
+            try:
+                await db.execute(
+                    text("UPDATE teaching_qa_cache SET local_audio_paths = :p WHERE id = CAST(:id AS uuid)"),
+                    {"p": __import__('json').dumps(local_audio_paths), "id": cache_id}
+                )
+                await db.commit()
+            except Exception as e:
+                print(f"[local_paths] Failed to save audio paths: {e}")
 
     # Store embedding (background, non-blocking)
     async def _store_embedding():
