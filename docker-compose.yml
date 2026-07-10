@@ -2,7 +2,7 @@ version: "3.9"
 
 services:
 
-  # ── FastAPI Backend ─────────────────────────────────────
+  # ── FastAPI Backend (GPU Worker — pregen only) ───────────
   api:
     build: .
     container_name: ai-teaching-api
@@ -10,15 +10,11 @@ services:
       - "8000:8000"
     env_file:
       - .env
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
+    # No depends_on — Postgres and Redis live on CPU server, not here
     volumes:
       - ./migrations:/app/migrations
       - .:/app
-      - /sdb-disk/ai-teaching:/sdb-disk/ai-teaching   # 6.9TB local storage
+      - /sdb-disk/ai-teaching:/sdb-disk/ai-teaching   # 6.9TB local storage for raw pregen files
     environment:
       - VOXCPM_URL=http://host.docker.internal:7861    # local TTS for pre-gen
       - VOXCPM_API_KEY=spassword                       # VoxCPM auth key
@@ -33,55 +29,10 @@ services:
       - MANIM_RENDER_TIMEOUT=300                       # seconds for manim CLI subprocess
 
     extra_hosts:
-      - "host.docker.internal:host-gateway"            # allow container to reach host ports
+      - "host.docker.internal:host-gateway"            # allow container to reach Ollama/Wan2GP/VoxCPM on host
     restart: unless-stopped
-    command: bash -c "python migrate.py && uvicorn main:app --host 0.0.0.0 --port 8000 --workers 16 --timeout-keep-alive 300 --backlog 2048"
+    command: bash -c "uvicorn main:app --host 0.0.0.0 --port 8000 --workers 4 --timeout-keep-alive 300"
+    # NOTE: No "python migrate.py" here — migrations run on CPU server only
 
-  # ── PostgreSQL ──────────────────────────────────────────
-  postgres:
-    image: pgvector/pgvector:pg16
-    container_name: ai-teaching-postgres
-    environment:
-      POSTGRES_USER: teaching_user
-      POSTGRES_PASSWORD: teaching_pass
-      POSTGRES_DB: teaching_db
-    ports:
-      - "5433:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U teaching_user -d teaching_db"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-    restart: unless-stopped
-
-  # ── Redis ───────────────────────────────────────────────
-  redis:
-    image: redis:7-alpine
-    container_name: ai-teaching-redis
-    ports:
-      - "6381:6379"
-    volumes:
-      - redis_data:/data
-    command: redis-server --appendonly yes --maxmemory 4gb --maxmemory-policy allkeys-lru
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-    restart: unless-stopped
-
-  # ── Adminer Database GUI ────────────────────────────────
-  adminer:
-    image: adminer
-    container_name: ai-teaching-adminer
-    restart: unless-stopped
-    ports:
-      - "8085:8080"
-    depends_on:
-      - postgres
-
-volumes:
-  postgres_data:
-  redis_data:
+  # Postgres, Redis, Adminer removed — they live on CPU server
+  # GPU is a stateless compute worker only
