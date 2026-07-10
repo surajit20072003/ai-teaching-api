@@ -37,7 +37,7 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-BASE_PATH = "/sdb-disk/ai-teaching"
+BASE_PATH = os.getenv("LOCAL_STORAGE_BASE", "/sdb-disk/ai-teaching")
 SUBJECTS_PATH = f"{BASE_PATH}/subjects"
 LOGS_PATH = f"{BASE_PATH}/logs"
 
