@@ -25,7 +25,7 @@ services:
       - WAN2GP_URL=http://host.docker.internal:9090    # local image + video for pre-gen
       - WAN2GP_API_KEY=mypassword1234                  # Wan2GP auth key
       - OLLAMA_URL=http://host.docker.internal:11434   # local Ollama for slide + Manim generation
-      - OLLAMA_MODEL=qwen3-coder:latest                # slides: fast code + reasoning
+      - OLLAMA_MODEL=qwen2.5-coder:32b                 # slides: fast code + reasoning
       - MANIM_OLLAMA_MODEL=devstral:24b                # Manim code: #1 OSS SWE-Bench model
       - OLLAMA_TIMEOUT=900                             # 15 min — larger models are slower
       - OLLAMA_EVICT_TIMEOUT=30                        # seconds to wait for VRAM eviction confirm

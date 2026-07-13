@@ -15,7 +15,7 @@ Pipeline per slide:
 
 Environment variables:
   OLLAMA_URL            — Ollama base URL (default: http://host.docker.internal:11434)
-  OLLAMA_MODEL          — model for slides (default: qwen3-coder:latest)
+  OLLAMA_MODEL          — model for slides (default: qwen2.5-coder:32b)
   MANIM_OLLAMA_MODEL    — model for Manim code (default: devstral:24b)
   OLLAMA_TIMEOUT        — seconds (default: 900)
   MANIM_MAX_RETRIES     — code-gen retries (default: 3)
@@ -41,7 +41,7 @@ logger = logging.getLogger(__name__)
 
 # ── Config ──────────────────────────────────────────────────────────────────────
 OLLAMA_URL           = os.getenv("OLLAMA_URL",    "http://host.docker.internal:11434")
-OLLAMA_MODEL         = os.getenv("OLLAMA_MODEL",  "qwen3-coder:latest")   # slides
+OLLAMA_MODEL         = os.getenv("OLLAMA_MODEL",  "qwen2.5-coder:32b")   # slides
 MANIM_OLLAMA_MODEL   = os.getenv("MANIM_OLLAMA_MODEL", "devstral:24b")    # Manim code
 OLLAMA_TIMEOUT       = int(os.getenv("OLLAMA_TIMEOUT",       "900"))
 MANIM_MAX_RETRIES    = int(os.getenv("MANIM_MAX_RETRIES",    "3"))
@@ -50,7 +50,7 @@ MANIM_QUALITY        = os.getenv("MANIM_QUALITY", "m")   # l=480p, m=720p, h=108
 
 # ── OpenRouter (cloud fallback for Manim code gen) ───────────────────────────
 OPENROUTER_API_KEY      = os.getenv("OPENROUTER_API_KEY", "")
-MANIM_OPENROUTER_MODEL  = os.getenv("MANIM_OPENROUTER_MODEL", "deepseek/deepseek-chat")
+MANIM_OPENROUTER_MODEL  = os.getenv("MANIM_OPENROUTER_MODEL", "deepseek/deepseek-coder-v2:instruct")
 OPENROUTER_BASE         = "https://openrouter.ai/api/v1/chat/completions"
 
 # ── Prompt file loader ──────────────────────────────────────────────────────────
@@ -220,11 +220,8 @@ def _enforce_timing_per_segment(code: str, segments: list) -> str:
     Much more precise than global scaling.
     """
     if not segments or "# Segment" not in code:
-        # Fallback: legacy global timing.
-        # Bug #9 fix: when segments is empty, sum() returns 0.0 which disables
-        # timing enforcement entirely. Use 5.0s as a safe minimum default.
-        total_dur = sum(s.get("duration", 5.0) for s in segments) if segments else 5.0
-        return _enforce_timing_global(code, total_dur)
+        # Fallback: legacy global timing
+        return _enforce_timing_global(code, sum(s.get("duration", 5.0) for s in segments))
 
     lines = code.split("\n")
     new_lines: list = []
@@ -354,7 +351,7 @@ async def _call_ollama_manim(system: str, prompt: str) -> str:
                 "options": {
                     "temperature": 0.2,
                     "num_predict": 6000,
-                    "num_ctx": 16384,
+                    "num_ctx": 8192,
                 },
             },
         )
@@ -576,15 +573,11 @@ def _find_rendered_mp4(output_dir: str, slide_index: int) -> Optional[str]:
         if "SlideScene.mp4" in files:
             return os.path.join(root, "SlideScene.mp4")
 
-    # Priority 3: exact name directly in output_dir (no subdirectory)
-    # Bug #10 fix: old code used os.listdir() which returns arbitrary ordering,
-    # risking returning slide_1.mp4 when looking for slide_0.mp4 in a shared dir.
-    # Now only returns a match if we find the exact expected filename.
-    direct = os.path.join(output_dir, named)
-    if os.path.exists(direct):
-        return direct
+    # Priority 3: any .mp4 directly in output_dir
+    for fname in os.listdir(output_dir):
+        if fname.endswith(".mp4"):
+            return os.path.join(output_dir, fname)
 
-    # Nothing found — caller will log and treat this slide as failed
     return None
 
 
@@ -647,7 +640,7 @@ async def generate_and_render_slide_manim(
     # ── Step 6: Render with retry ─────────────────────────────────────────────
     local_mp4 = None
     for attempt in range(1, 3):  # up to 2 render attempts
-        local_mp4 = await asyncio.get_running_loop().run_in_executor(
+        local_mp4 = await asyncio.get_event_loop().run_in_executor(
             None,
             render_manim_code,
             py_code,

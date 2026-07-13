@@ -14,7 +14,7 @@ Ollama API endpoints used:
 
 Environment variables:
   OLLAMA_URL           → base URL  (default: http://host.docker.internal:11434)
-  OLLAMA_MODEL         → model name (default: qwen3-coder:latest)
+  OLLAMA_MODEL         → model name (default: qwen2.5-coder:32b)
   OLLAMA_EVICT_TIMEOUT → seconds to wait for all models to evict (default: 30)
   OLLAMA_LOAD_TIMEOUT  → seconds to wait for model to appear in /api/ps (default: 120)
 """
@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 
 # ── Config ─────────────────────────────────────────────────────────────────────
 OLLAMA_URL           = os.getenv("OLLAMA_URL", "http://host.docker.internal:11434")
-OLLAMA_MODEL         = os.getenv("OLLAMA_MODEL", "qwen3-coder:latest")
+OLLAMA_MODEL         = os.getenv("OLLAMA_MODEL", "qwen2.5-coder:32b")
 OLLAMA_EVICT_TIMEOUT = int(os.getenv("OLLAMA_EVICT_TIMEOUT", "30"))
 OLLAMA_LOAD_TIMEOUT  = int(os.getenv("OLLAMA_LOAD_TIMEOUT", "120"))
 
@@ -68,7 +68,7 @@ async def is_model_loaded(model_name: str) -> bool:
     Matches on exact name or base name (ignoring tag comparison edge cases).
     """
     loaded = await get_loaded_models()
-    # Normalize: "qwen3-coder:latest" matches "qwen3-coder:latest" or "qwen3-coder"
+    # Normalize: "qwen2.5-coder:32b" matches "qwen2.5-coder:32b" or "qwen2.5-coder"
     base_name = model_name.split(":")[0].lower()
     for name in loaded:
         if name.lower() == model_name.lower():

@@ -8,7 +8,7 @@ OPENROUTER_BASE    = "https://openrouter.ai/api/v1/chat/completions"
 OPENROUTER_LLM     = "google/gemini-2.5-flash"          # real-time: fast cloud
 
 OLLAMA_URL         = os.getenv("OLLAMA_URL", "http://host.docker.internal:11434")
-OLLAMA_MODEL       = os.getenv("OLLAMA_MODEL", "qwen3-coder:latest")   # upgraded: stronger coding+reasoning model
+OLLAMA_MODEL       = os.getenv("OLLAMA_MODEL", "qwen2.5-coder:32b")   # upgraded: stronger coding+reasoning model
 OLLAMA_TIMEOUT     = int(os.getenv("OLLAMA_TIMEOUT", "900"))             # 15 min — qwen3-coder is larger
 
 # ── Prompts ───────────────────────────────────────────────────────────────────
@@ -173,7 +173,7 @@ async def _generate_via_ollama(prompt: str) -> str:
         "format":     "json",                                    # Forces Ollama to output valid JSON always
         "messages":   [{"role": "user", "content": prompt}],
         "keep_alive": -1,                                        # Never auto-unload during long generation
-        "options":    {"temperature": 0.7, "num_predict": 8000},  # 8000 tokens → richer 220+ word narrations
+        "options":    {"temperature": 0.7, "num_predict": 8000, "num_ctx": 8192},  # 8000 tokens → richer 220+ word narrations
     }
     logger.info(f"[SlideGen/Ollama] POST {url} model={OLLAMA_MODEL} timeout={OLLAMA_TIMEOUT}s")
     async with httpx.AsyncClient(timeout=OLLAMA_TIMEOUT) as client:

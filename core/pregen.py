@@ -334,7 +334,8 @@ async def _voxcpm_tts(text: str, language: str = "hi-IN") -> Optional[bytes]:
             return dl_resp.content
 
     except Exception as e:
-        _log(f"[VoxCPM] Error: {e}")
+        err_msg = str(e) or type(e).__name__
+        _log(f"[VoxCPM] Error: {err_msg}")
         return None
 
 
@@ -406,7 +407,8 @@ async def _wan2gp_image(prompt: str) -> Optional[bytes]:
             return dl_resp.content
 
     except Exception as e:
-        _log(f"[Wan2GP] Error: {e}")
+        err_msg = str(e) or type(e).__name__
+        _log(f"[Wan2GP] Error: {err_msg}")
         return None
 
 
@@ -598,6 +600,7 @@ async def _pregen_media_only(
     row: Dict[str, Any],
     slides: list,
     only_indices: set | None = None,
+    db: AsyncSession | None = None,
 ) -> tuple:
     """
     Phase B: generate images + audio for slides in parallel.
@@ -610,15 +613,65 @@ async def _pregen_media_only(
     language = row.get("language") or "en-IN"
     subject  = row.get("subject_id") or "General"
 
-    indices_to_process = only_indices if only_indices is not None else set(range(len(slides)))
-    _log(f"[Pregen-B] {cache_id[:8]}: launching image+audio for "
-         f"{len(indices_to_process)}/{len(slides)} slides...")
+    # Hydrate slides from the DB columns before checking which indices need re-generation.
+    # Without this, slides whose URLs are in image_urls/slide_audio_urls but NOT embedded
+    # in the JSONB slide object itself would be wrongly re-generated.
+    db_image_urls = dict(row.get("image_urls") or {})
+    db_audio_urls_list = (row.get("slide_audio_urls") or {}).get("urls", [])
+    db_audio_by_idx = {entry["slideIndex"]: entry for entry in db_audio_urls_list if "slideIndex" in entry}
 
-    # Run only the slides that actually need generation
-    tasks = [
-        _process_slide(idx, slides[idx], cache_id, language, subject)
-        for idx in sorted(indices_to_process)
-    ]
+    for i, slide in enumerate(slides):
+        if not (slide.get("infographicUrl") or "").startswith("http"):
+            db_img = db_image_urls.get(str(i), {}).get("url", "")
+            if db_img.startswith("http"):
+                slide["infographicUrl"] = db_img
+        if not (slide.get("audioUrl") or "").startswith("http"):
+            db_aud = db_audio_by_idx.get(i, {})
+            if (db_aud.get("audioUrl") or "").startswith("http"):
+                slide["audioUrl"] = db_aud["audioUrl"]
+                slide["duration"] = db_aud.get("duration", slide.get("duration", 0))
+
+    if only_indices is not None:
+        indices_to_process = only_indices
+    else:
+        indices_to_process = {
+            i for i, s in enumerate(slides)
+            if not (s.get("infographicUrl") or "").startswith("http") or
+               not (s.get("audioUrl") or "").startswith("http")
+        }
+
+    if not indices_to_process:
+        _log(f"[Pregen-B] {cache_id[:8]}: media already in DB ({len(slides)} slides) — skipping generation")
+    else:
+        _log(f"[Pregen-B] {cache_id[:8]}: launching image+audio for "
+             f"{len(indices_to_process)}/{len(slides)} slides...")
+
+    # Use a Semaphore to limit concurrency to 3 slides at a time
+    # This fully utilizes the 3-GPU setup without overwhelming it with 12+ requests
+    sem = asyncio.Semaphore(3)
+    db_lock = asyncio.Lock()
+
+    async def _process_with_sem(idx: int):
+        async with sem:
+            res = await _process_slide(idx, slides[idx], cache_id, language, subject)
+            slides[idx] = res[0]
+            if db:
+                async with db_lock:
+                    try:
+                        await db.execute(
+                            text("""
+                                UPDATE teaching_qa_cache
+                                SET presentation_slides = CAST(:slides AS jsonb)
+                                WHERE id = CAST(:id AS uuid)
+                            """),
+                            {"slides": json.dumps(slides), "id": cache_id}
+                        )
+                        await db.commit()
+                    except Exception as e:
+                        _log(f"[Pregen-B] {cache_id[:8]} slide {idx+1}: DB incremental save failed: {e}")
+            return res
+
+    tasks = [_process_with_sem(idx) for idx in sorted(indices_to_process)]
     task_results = await asyncio.gather(*tasks, return_exceptions=True)
 
     # Map results back to their original slide index
@@ -697,7 +750,16 @@ async def _pregen_manim_only(
     # slides that already rendered successfully on a previous pass.
     existing_manim = dict(row.get("manim_video_urls") or {})
 
-    _log(f"[Pregen-C] {cache_id[:8]}: Manim for {len(manim_slides)} formula slides...")
+    missing_manim = [
+        (idx, slide) for idx, slide in manim_slides
+        if not (existing_manim.get(str(idx), {}) or {}).get("url", "").startswith("http")
+    ]
+
+    if not missing_manim:
+        _log(f"[Pregen-C] {cache_id[:8]}: manim videos already in DB ({len(manim_slides)} slides) — skipping generation")
+        return {str(idx): existing_manim.get(str(idx), {}) for idx, slide in manim_slides}
+
+    _log(f"[Pregen-C] {cache_id[:8]}: Manim for {len(missing_manim)}/{len(manim_slides)} formula slides...")
     manim_video_urls: dict = {}
 
     for idx, slide in manim_slides:
@@ -1288,7 +1350,7 @@ async def run_pregen_batch(
 
             try:
                 enriched_slides, audio_url_list, total_duration, audio_durations, image_urls_map = \
-                    await _pregen_media_only(row_dict, slides)
+                    await _pregen_media_only(row_dict, slides, db=db)
                 row_dict["_enriched_slides"]  = enriched_slides
                 row_dict["_audio_url_list"]   = audio_url_list
                 row_dict["_total_duration"]   = total_duration
@@ -1589,69 +1651,10 @@ async def retry_media_for_rows(subject_id: str, db_factory) -> None:
             language = row_dict.get("language") or "en-IN"
             row_dict["subject_id"] = subject_name
 
-            # Bug #13 fix: hydrate slides from the separate DB columns before
-            # checking which indices need re-generation.  Without this, slides
-            # whose URLs are in image_urls / slide_audio_urls but NOT embedded
-            # in the JSONB slide object itself would be wrongly re-generated.
-            db_image_urls = dict(row_dict.get("image_urls") or {})
-            db_audio_urls_list = (row_dict.get("slide_audio_urls") or {}).get("urls", [])
-            db_audio_by_idx = {entry["slideIndex"]: entry for entry in db_audio_urls_list if "slideIndex" in entry}
-
-            for i, slide in enumerate(slides):
-                if not (slide.get("infographicUrl") or "").startswith("http"):
-                    db_img = db_image_urls.get(str(i), {}).get("url", "")
-                    if db_img.startswith("http"):
-                        slide["infographicUrl"] = db_img
-                if not (slide.get("audioUrl") or "").startswith("http"):
-                    db_aud = db_audio_by_idx.get(i, {})
-                    if (db_aud.get("audioUrl") or "").startswith("http"):
-                        slide["audioUrl"] = db_aud["audioUrl"]
-                        slide["duration"] = db_aud.get("duration", slide.get("duration", 0))
-
-            # Identify WHICH specific slides are missing image or audio (after hydration)
-            slides_missing_img = {
-                i for i, s in enumerate(slides)
-                if not (s.get("infographicUrl") or "").startswith("http")
-            }
-            slides_missing_aud = {
-                i for i, s in enumerate(slides)
-                if not (s.get("audioUrl") or "").startswith("http")
-            }
-            missing_indices = slides_missing_img | slides_missing_aud
-
-            if not missing_indices:
-                # Media complete — still push to Phase C for Manim check
-                row_dict["_enriched_slides"]  = slides
-                row_dict["_audio_url_list"]   = [
-                    {"slideIndex": i, "audioUrl": s["audioUrl"],
-                     "duration": s.get("duration", 0)}
-                    for i, s in enumerate(slides)
-                    if (s.get("audioUrl") or "").startswith("http")
-                ]
-                row_dict["_total_duration"]   = sum(
-                    s.get("duration", 0) for s in slides
-                    if (s.get("audioUrl") or "").startswith("http")
-                )
-                row_dict["_audio_durations"]  = {
-                    i: s.get("duration", 0)
-                    for i, s in enumerate(slides)
-                    if s.get("duration", 0) > 0
-                }
-                row_dict["_image_urls_map"]   = {
-                    str(i): {"url": s["infographicUrl"]}
-                    for i, s in enumerate(slides)
-                    if (s.get("infographicUrl") or "").startswith("http")
-                }
-                phase_b_rows.append(row_dict)
-                _log(f"[Retry-B] {cache_id[:8]}: media already complete — forwarding to Phase C")
-                continue
-
-            _log(f"[Retry-B] {cache_id[:8]}: {len(missing_indices)}/{len(slides)} slides need media "
-                 f"(img={len(slides_missing_img)} aud={len(slides_missing_aud)})")
             try:
-                # Pass only_indices so already-complete slides are NOT re-generated
-                enriched_slides, audio_url_list, total_duration, audio_durations, image_urls_map = \
-                    await _pregen_media_only(row_dict, slides, only_indices=missing_indices)
+                async with db_factory() as temp_db:
+                    enriched_slides, audio_url_list, total_duration, audio_durations, image_urls_map = \
+                        await _pregen_media_only(row_dict, slides, only_indices=None, db=temp_db)
                 row_dict["_enriched_slides"]  = enriched_slides
                 row_dict["_audio_url_list"]   = audio_url_list
                 row_dict["_total_duration"]   = total_duration
