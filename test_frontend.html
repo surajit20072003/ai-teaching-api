@@ -1,11 +1,18 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AI Teaching Assistant</title>
     <style>
-        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+        *,
+        *::before,
+        *::after {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
 
         body {
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
@@ -25,11 +32,13 @@
             text-align: center;
             margin-bottom: 28px;
         }
+
         .header h1 {
             font-size: 28px;
             font-weight: 700;
             color: #1a1a2e;
         }
+
         .header p {
             color: #6b7280;
             margin-top: 6px;
@@ -40,7 +49,7 @@
         .card {
             background: #fff;
             border-radius: 14px;
-            box-shadow: 0 2px 16px rgba(0,0,0,0.08);
+            box-shadow: 0 2px 16px rgba(0, 0, 0, 0.08);
             padding: 28px;
             margin-bottom: 24px;
         }
@@ -51,8 +60,11 @@
             gap: 16px;
             margin-bottom: 16px;
         }
+
         @media (max-width: 600px) {
-            .form-row { grid-template-columns: 1fr; }
+            .form-row {
+                grid-template-columns: 1fr;
+            }
         }
 
         label {
@@ -62,12 +74,14 @@
             color: #374151;
             margin-bottom: 6px;
         }
+
         label .optional {
             font-weight: 400;
             color: #9ca3af;
         }
 
-        input[type="text"], select {
+        input[type="text"],
+        select {
             width: 100%;
             padding: 11px 14px;
             border: 1.5px solid #e5e7eb;
@@ -77,14 +91,18 @@
             transition: border-color .2s, box-shadow .2s;
             background: #fafafa;
         }
-        input[type="text"]:focus, select:focus {
+
+        input[type="text"]:focus,
+        select:focus {
             outline: none;
             border-color: #6366f1;
             background: #fff;
-            box-shadow: 0 0 0 3px rgba(99,102,241,0.12);
+            box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.12);
         }
 
-        .search-wrapper { position: relative; }
+        .search-wrapper {
+            position: relative;
+        }
 
         /* ── Search Results Panel ───────────────────────── */
         #search-panel {
@@ -93,7 +111,7 @@
             border: 1.5px solid #e5e7eb;
             border-radius: 10px;
             overflow: hidden;
-            box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
             background: #fff;
         }
 
@@ -105,6 +123,7 @@
             background: #f8f9ff;
             border-bottom: 1px solid #e5e7eb;
         }
+
         .panel-header .ph-title {
             font-size: 12px;
             font-weight: 700;
@@ -112,6 +131,7 @@
             text-transform: uppercase;
             letter-spacing: .6px;
         }
+
         .panel-header .ph-count {
             font-size: 12px;
             color: #9ca3af;
@@ -131,8 +151,13 @@
             cursor: pointer;
             transition: background .12s;
         }
-        .result-item:last-child { border-bottom: none; }
-        .result-item:hover, .result-item.active {
+
+        .result-item:last-child {
+            border-bottom: none;
+        }
+
+        .result-item:hover,
+        .result-item.active {
             background: #f0f0ff;
         }
 
@@ -144,14 +169,24 @@
             gap: 4px;
             width: 52px;
         }
+
         .ri-pct {
             font-size: 15px;
             font-weight: 700;
             line-height: 1;
         }
-        .pct-high   { color: #059669; }
-        .pct-medium { color: #d97706; }
-        .pct-low    { color: #9ca3af; }
+
+        .pct-high {
+            color: #059669;
+        }
+
+        .pct-medium {
+            color: #d97706;
+        }
+
+        .pct-low {
+            color: #9ca3af;
+        }
 
         .ri-bar-bg {
             width: 100%;
@@ -160,19 +195,30 @@
             border-radius: 2px;
             overflow: hidden;
         }
+
         .ri-bar-fill {
             height: 100%;
             border-radius: 2px;
             transition: width .3s;
         }
-        .fill-high   { background: #059669; }
-        .fill-medium { background: #d97706; }
-        .fill-low    { background: #9ca3af; }
+
+        .fill-high {
+            background: #059669;
+        }
+
+        .fill-medium {
+            background: #d97706;
+        }
+
+        .fill-low {
+            background: #9ca3af;
+        }
 
         .ri-body {
             flex: 1;
             min-width: 0;
         }
+
         .ri-question {
             font-size: 14px;
             font-weight: 500;
@@ -181,21 +227,35 @@
             overflow: hidden;
             text-overflow: ellipsis;
         }
+
         .ri-meta {
             display: flex;
             gap: 8px;
             margin-top: 4px;
             flex-wrap: wrap;
         }
+
         .ri-tag {
             font-size: 11px;
             padding: 2px 8px;
             border-radius: 20px;
             font-weight: 500;
         }
-        .tag-subject  { background: #ede9fe; color: #6d28d9; }
-        .tag-uses     { background: #e0f2fe; color: #0369a1; }
-        .tag-cached   { background: #dcfce7; color: #166534; }
+
+        .tag-subject {
+            background: #ede9fe;
+            color: #6d28d9;
+        }
+
+        .tag-uses {
+            background: #e0f2fe;
+            color: #0369a1;
+        }
+
+        .tag-cached {
+            background: #dcfce7;
+            color: #166534;
+        }
 
         .ri-action {
             flex-shrink: 0;
@@ -223,15 +283,22 @@
             align-items: center;
             gap: 6px;
         }
+
         .spinner {
-            width: 12px; height: 12px;
+            width: 12px;
+            height: 12px;
             border: 2px solid #e5e7eb;
             border-top-color: #6366f1;
             border-radius: 50%;
             animation: spin .6s linear infinite;
             flex-shrink: 0;
         }
-        @keyframes spin { to { transform: rotate(360deg); } }
+
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
 
         /* ── Generate button ────────────────────────────── */
         #submitBtn {
@@ -248,9 +315,21 @@
             margin-top: 4px;
             letter-spacing: .2px;
         }
-        #submitBtn:hover  { opacity: .92; transform: translateY(-1px); }
-        #submitBtn:active { transform: translateY(0); }
-        #submitBtn:disabled { opacity: .5; cursor: not-allowed; transform: none; }
+
+        #submitBtn:hover {
+            opacity: .92;
+            transform: translateY(-1px);
+        }
+
+        #submitBtn:active {
+            transform: translateY(0);
+        }
+
+        #submitBtn:disabled {
+            opacity: .5;
+            cursor: not-allowed;
+            transform: none;
+        }
 
         /* ── Loading ────────────────────────────────────── */
         #loading {
@@ -261,19 +340,34 @@
             font-weight: 600;
             font-size: 14px;
         }
+
         .dot-pulse::after {
             content: '';
             animation: dots 1.4s infinite;
         }
+
         @keyframes dots {
-            0%   { content: ''; }
-            33%  { content: '.'; }
-            66%  { content: '..'; }
-            100% { content: '...'; }
+            0% {
+                content: '';
+            }
+
+            33% {
+                content: '.';
+            }
+
+            66% {
+                content: '..';
+            }
+
+            100% {
+                content: '...';
+            }
         }
 
         /* ── Result slides ──────────────────────────────── */
-        #result { margin-top: 0; }
+        #result {
+            margin-top: 0;
+        }
 
         .result-header {
             display: flex;
@@ -281,15 +375,28 @@
             gap: 10px;
             margin-bottom: 16px;
         }
-        .result-header h2 { font-size: 18px; font-weight: 700; }
+
+        .result-header h2 {
+            font-size: 18px;
+            font-weight: 700;
+        }
+
         .cache-badge {
             font-size: 12px;
             padding: 3px 10px;
             border-radius: 20px;
             font-weight: 600;
         }
-        .cache-yes { background: #dcfce7; color: #166534; }
-        .cache-no  { background: #f3f4f6; color: #6b7280; }
+
+        .cache-yes {
+            background: #dcfce7;
+            color: #166534;
+        }
+
+        .cache-no {
+            background: #f3f4f6;
+            color: #6b7280;
+        }
 
         .slide {
             background: #fafafa;
@@ -298,12 +405,14 @@
             padding: 20px;
             margin-bottom: 16px;
         }
+
         .slide h3 {
             font-size: 16px;
             font-weight: 700;
             color: #1a1a2e;
             margin-bottom: 10px;
         }
+
         .slide ul {
             padding-left: 20px;
             margin-bottom: 12px;
@@ -311,6 +420,7 @@
             font-size: 14px;
             line-height: 1.7;
         }
+
         .slide-narration {
             background: #fff;
             padding: 12px 14px;
@@ -321,24 +431,28 @@
             font-style: italic;
             margin-bottom: 12px;
         }
+
         .slide img {
             max-width: 100%;
             border-radius: 8px;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
             margin-top: 10px;
         }
+
         .slide video {
             max-width: 100%;
             width: 100%;
             border-radius: 8px;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
             margin-top: 10px;
             background: #000;
         }
+
         audio {
             width: 100%;
             margin-top: 12px;
         }
+
         .manim-badge {
             display: inline-flex;
             align-items: center;
@@ -353,20 +467,23 @@
             letter-spacing: .4px;
             vertical-align: middle;
         }
+
         .slide-media-label {
             font-size: 11px;
             color: #9ca3af;
             margin-top: 6px;
             font-style: italic;
         }
+
         .sync-player {
             position: relative;
             margin-top: 10px;
             border-radius: 8px;
             overflow: hidden;
             background: #000;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
         }
+
         .sync-player video {
             width: 100%;
             display: block;
@@ -374,10 +491,12 @@
             margin-top: 0;
             box-shadow: none;
         }
+
         .sync-status {
             position: absolute;
-            top: 8px; right: 10px;
-            background: rgba(0,0,0,0.55);
+            top: 8px;
+            right: 10px;
+            background: rgba(0, 0, 0, 0.55);
             color: #fff;
             font-size: 10px;
             padding: 2px 8px;
@@ -394,6 +513,7 @@
             color: #dc2626;
             font-size: 14px;
         }
+
         .blocked-box {
             background: #fffbeb;
             border: 1.5px solid #fcd34d;
@@ -404,186 +524,182 @@
         }
     </style>
 </head>
+
 <body>
-<div class="container">
+    <div class="container">
 
-    <div class="header">
-        <h1>👨‍🏫 AI Teaching Assistant</h1>
-        <p>Ask any question — get a full multimedia presentation</p>
-    </div>
+        <div class="header">
+            <h1>👨‍🏫 AI Teaching Assistant</h1>
+            <p>Ask any question — get a full multimedia presentation</p>
+        </div>
 
-    <div class="card">
-        <!-- Subject + Question inputs -->
-        <div class="form-row">
-            <div>
-                <label for="subject">Subject</label>
-                <select id="subject">
-                    <option value="">— Select Subject —</option>
-                </select>
-            </div>
-            <div>
-                <label for="question">What do you want to learn?</label>
-                <div class="search-wrapper">
-                    <input
-                        type="text"
-                        id="question"
-                        placeholder="Type a topic or question…"
-                        autocomplete="off"
-                    >
+        <div class="card">
+            <!-- Subject + Question inputs -->
+            <div class="form-row">
+                <div>
+                    <label for="subject">Subject</label>
+                    <select id="subject">
+                        <option value="">— Select Subject —</option>
+                    </select>
+                </div>
+                <div>
+                    <label for="question">What do you want to learn?</label>
+                    <div class="search-wrapper">
+                        <input type="text" id="question" placeholder="Type a topic or question…" autocomplete="off">
+                    </div>
                 </div>
             </div>
-        </div>
 
-        <!-- Live search results panel -->
-        <div id="search-panel">
-            <div class="panel-header">
-                <span class="ph-title">🔍 Similar Questions &amp; Documents</span>
-                <span class="ph-count" id="panel-count"></span>
+            <!-- Live search results panel -->
+            <div id="search-panel">
+                <div class="panel-header">
+                    <span class="ph-title">🔍 Similar Questions &amp; Documents</span>
+                    <span class="ph-count" id="panel-count"></span>
+                </div>
+                <div class="result-list" id="result-list"></div>
             </div>
-            <div class="result-list" id="result-list"></div>
+
+            <!-- Status line -->
+            <div id="search-status"></div>
+
+            <!-- Generate button -->
+            <button id="submitBtn" onclick="generate()">⚡ Generate Presentation</button>
+
+            <div id="loading">
+                <span class="dot-pulse">⏳ Generating slides, images and audio</span>
+            </div>
         </div>
 
-        <!-- Status line -->
-        <div id="search-status"></div>
+        <!-- Slide output -->
+        <div id="result"></div>
 
-        <!-- Generate button -->
-        <button id="submitBtn" onclick="generate()">⚡ Generate Presentation</button>
-
-        <div id="loading">
-            <span class="dot-pulse">⏳ Generating slides, images and audio</span>
-        </div>
     </div>
 
-    <!-- Slide output -->
-    <div id="result"></div>
+    <script>
+        const API_BASE = window.location.origin;
 
-</div>
+        // ─────────────────────────────────────────────────────────────────
+        // Subject name lookup map  { uuid → name }
+        // ─────────────────────────────────────────────────────────────────
+        const subjectNames = {};
 
-<script>
-const API_BASE = window.location.origin;
+        async function loadSubjects() {
+            try {
+                const res = await fetch(`${API_BASE}/subjects`);
+                const data = await res.json();
+                const sel = document.getElementById('subject');
+                (data.subjects || []).forEach(s => {
+                    subjectNames[s.subject_id] = s.name;
+                    const opt = document.createElement('option');
+                    opt.value = s.subject_id;   // UUID used by API
+                    opt.textContent = s.name;          // human name shown
+                    sel.appendChild(opt);
+                });
+            } catch (e) {
+                console.warn('Could not load subjects:', e);
+            }
+        }
+        loadSubjects();
 
-// ─────────────────────────────────────────────────────────────────
-// Subject name lookup map  { uuid → name }
-// ─────────────────────────────────────────────────────────────────
-const subjectNames = {};
+        // ─────────────────────────────────────────────────────────────────
+        // Live Search while typing
+        // ─────────────────────────────────────────────────────────────────
+        const qInput = document.getElementById('question');
+        const panel = document.getElementById('search-panel');
+        const resultList = document.getElementById('result-list');
+        const panelCount = document.getElementById('panel-count');
+        const statusEl = document.getElementById('search-status');
 
-async function loadSubjects() {
-    try {
-        const res  = await fetch(`${API_BASE}/subjects`);
-        const data = await res.json();
-        const sel  = document.getElementById('subject');
-        (data.subjects || []).forEach(s => {
-            subjectNames[s.subject_id] = s.name;
-            const opt = document.createElement('option');
-            opt.value       = s.subject_id;   // UUID used by API
-            opt.textContent = s.name;          // human name shown
-            sel.appendChild(opt);
+        let debounceTimer = null;
+        let activeIdx = -1;
+        let allResults = [];
+
+        qInput.addEventListener('input', () => {
+            clearTimeout(debounceTimer);
+            const q = qInput.value.trim();
+            if (q.length < 2) {
+                hidePanel();
+                setStatus('');
+                return;
+            }
+            setStatus('<span class="spinner"></span> Searching…');
+            debounceTimer = setTimeout(() => doSearch(q), 280);
         });
-    } catch (e) {
-        console.warn('Could not load subjects:', e);
-    }
-}
-loadSubjects();
 
-// ─────────────────────────────────────────────────────────────────
-// Live Search while typing
-// ─────────────────────────────────────────────────────────────────
-const qInput      = document.getElementById('question');
-const panel       = document.getElementById('search-panel');
-const resultList  = document.getElementById('result-list');
-const panelCount  = document.getElementById('panel-count');
-const statusEl    = document.getElementById('search-status');
+        async function doSearch(q) {
+            const subjectId = document.getElementById('subject').value.trim();
+            if (!subjectId) {
+                hidePanel();
+                setStatus('⚠️ Select a subject first to enable search');
+                return;
+            }
+            try {
+                const url = `${API_BASE}/search-questions?q=${encodeURIComponent(q)}&subject_id=${encodeURIComponent(subjectId)}&limit=20`;
+                const res = await fetch(url);
+                const data = await res.json();
 
-let debounceTimer = null;
-let activeIdx     = -1;
-let allResults    = [];
+                // Merge both result sources into one unified list
+                const cacheResults = (data.qa_cache_results || []).map(r => ({
+                    question: r.question,
+                    similarity: r.similarity,
+                    subject_id: r.subject_id,
+                    usage_count: r.usage_count || 0,
+                    source: 'cache'
+                }));
+                const docResults = (data.document_chunk_results || []).map(r => ({
+                    question: r.section_title
+                        ? `[${r.section_title}] ${r.chunk_text.slice(0, 80)}…`
+                        : r.chunk_text.slice(0, 100) + '…',
+                    similarity: r.similarity,
+                    subject_id: r.subject_id || '',
+                    usage_count: 0,
+                    source: 'document',
+                    document_title: r.document_title
+                }));
 
-qInput.addEventListener('input', () => {
-    clearTimeout(debounceTimer);
-    const q = qInput.value.trim();
-    if (q.length < 2) {
-        hidePanel();
-        setStatus('');
-        return;
-    }
-    setStatus('<span class="spinner"></span> Searching…');
-    debounceTimer = setTimeout(() => doSearch(q), 280);
-});
+                allResults = [...cacheResults, ...docResults]
+                    .sort((a, b) => b.similarity - a.similarity);
 
-async function doSearch(q) {
-    const subjectId = document.getElementById('subject').value.trim();
-    if (!subjectId) {
-        hidePanel();
-        setStatus('⚠️ Select a subject first to enable search');
-        return;
-    }
-    try {
-        const url = `${API_BASE}/search-questions?q=${encodeURIComponent(q)}&subject_id=${encodeURIComponent(subjectId)}&limit=20`;
-        const res  = await fetch(url);
-        const data = await res.json();
+                activeIdx = -1;
+                renderPanel(allResults, q);
+            } catch {
+                hidePanel();
+                setStatus('');
+            }
+        }
 
-        // Merge both result sources into one unified list
-        const cacheResults = (data.qa_cache_results || []).map(r => ({
-            question:   r.question,
-            similarity: r.similarity,
-            subject_id: r.subject_id,
-            usage_count: r.usage_count || 0,
-            source: 'cache'
-        }));
-        const docResults = (data.document_chunk_results || []).map(r => ({
-            question:   r.section_title
-                          ? `[${r.section_title}] ${r.chunk_text.slice(0, 80)}…`
-                          : r.chunk_text.slice(0, 100) + '…',
-            similarity: r.similarity,
-            subject_id: r.subject_id || '',
-            usage_count: 0,
-            source: 'document',
-            document_title: r.document_title
-        }));
-
-        allResults = [...cacheResults, ...docResults]
-            .sort((a, b) => b.similarity - a.similarity);
-
-        activeIdx = -1;
-        renderPanel(allResults, q);
-    } catch {
-        hidePanel();
-        setStatus('');
-    }
-}
-
-function renderPanel(results, query) {
-    if (!results.length) {
-        panel.style.display = 'block';
-        panelCount.textContent = '0 matches';
-        resultList.innerHTML = `
+        function renderPanel(results, query) {
+            if (!results.length) {
+                panel.style.display = 'block';
+                panelCount.textContent = '0 matches';
+                resultList.innerHTML = `
             <div class="no-results">
                 💡 No similar questions found — will generate fresh content
             </div>`;
-        setStatus('');
-        return;
-    }
+                setStatus('');
+                return;
+            }
 
-    panelCount.textContent = `${results.length} match${results.length > 1 ? 'es' : ''}`;
+            panelCount.textContent = `${results.length} match${results.length > 1 ? 'es' : ''}`;
 
-    resultList.innerHTML = results.map((r, i) => {
-        const pct      = Math.round(r.similarity * 100);
-        const level    = pct >= 85 ? 'high' : pct >= 65 ? 'medium' : 'low';
+            resultList.innerHTML = results.map((r, i) => {
+                const pct = Math.round(r.similarity * 100);
+                const level = pct >= 85 ? 'high' : pct >= 65 ? 'medium' : 'low';
 
-        // Source badge: cache vs document
-        const sourceTag = r.source === 'document'
-            ? `<span class="ri-tag" style="background:#fef3c7;color:#92400e">📄 ${escHtml(r.document_title || 'Document')}</span>`
-            : `<span class="ri-tag tag-cached">✓ Cached</span>`;
+                // Source badge: cache vs document
+                const sourceTag = r.source === 'document'
+                    ? `<span class="ri-tag" style="background:#fef3c7;color:#92400e">📄 ${escHtml(r.document_title || 'Document')}</span>`
+                    : `<span class="ri-tag tag-cached">✓ Cached</span>`;
 
-        // Subject name (human readable) instead of raw UUID
-        const subName  = subjectNames[r.subject_id] || r.subject_id;
-        const subTag   = subName ? `<span class="ri-tag tag-subject">${escHtml(subName)}</span>` : '';
-        const usesTag  = r.usage_count > 1 ? `<span class="ri-tag tag-uses">👥 ${r.usage_count} uses</span>` : '';
+                // Subject name (human readable) instead of raw UUID
+                const subName = subjectNames[r.subject_id] || r.subject_id;
+                const subTag = subName ? `<span class="ri-tag tag-subject">${escHtml(subName)}</span>` : '';
+                const usesTag = r.usage_count > 1 ? `<span class="ri-tag tag-uses">👥 ${r.usage_count} uses</span>` : '';
 
-        // Highlight matching words in result
-        const highlighted = highlightMatch(r.question, query);
+                // Highlight matching words in result
+                const highlighted = highlightMatch(r.question, query);
 
-        return `
+                return `
         <div class="result-item" data-index="${i}" onclick="selectResult(${i})">
             <div class="ri-bar">
                 <span class="ri-pct pct-${level}">${pct}%</span>
@@ -601,178 +717,178 @@ function renderPanel(results, query) {
             </div>
             <div class="ri-action">Use this →</div>
         </div>`;
-    }).join('');
+            }).join('');
 
-    panel.style.display = 'block';
-    setStatus(`✅ ${results.length} similar question${results.length > 1 ? 's' : ''} found in cache — click one to reuse instantly`);
-}
-
-function selectResult(idx) {
-    const r = allResults[idx];
-    if (!r) return;
-    qInput.value = r.question;
-    hidePanel();
-    setStatus(`✅ Selected: "${r.question}" (${Math.round(r.similarity * 100)}% match) — click Generate to load from cache`);
-}
-
-function hidePanel() {
-    panel.style.display = 'none';
-    resultList.innerHTML = '';
-    activeIdx = -1;
-}
-
-// Keyboard navigation
-qInput.addEventListener('keydown', e => {
-    const items = resultList.querySelectorAll('.result-item');
-    if (!items.length) return;
-    if (e.key === 'ArrowDown') {
-        e.preventDefault();
-        activeIdx = Math.min(activeIdx + 1, items.length - 1);
-        updateActive(items);
-    } else if (e.key === 'ArrowUp') {
-        e.preventDefault();
-        activeIdx = Math.max(activeIdx - 1, 0);
-        updateActive(items);
-    } else if (e.key === 'Enter' && activeIdx >= 0) {
-        e.preventDefault();
-        selectResult(activeIdx);
-    } else if (e.key === 'Escape') {
-        hidePanel();
-    }
-});
-
-function updateActive(items) {
-    items.forEach((el, i) => el.classList.toggle('active', i === activeIdx));
-    if (items[activeIdx]) items[activeIdx].scrollIntoView({ block: 'nearest' });
-}
-
-// Close on outside click
-document.addEventListener('click', e => {
-    if (!e.target.closest('.search-wrapper') && !e.target.closest('#search-panel')) {
-        hidePanel();
-    }
-});
-
-function setStatus(html) {
-    statusEl.innerHTML = html;
-}
-
-// Highlight query words inside result text
-function highlightMatch(text, query) {
-    const escaped = escHtml(text);
-    const words = query.trim().split(/\s+/).filter(w => w.length > 1)
-        .map(w => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
-    if (!words.length) return escaped;
-    const re = new RegExp(`(${words.join('|')})`, 'gi');
-    return escHtml(text).replace(re, '<mark style="background:#fef08a;border-radius:2px;padding:0 1px">$1</mark>');
-}
-
-function escHtml(s) {
-    return String(s)
-        .replace(/&/g,'&amp;').replace(/</g,'&lt;')
-        .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-}
-
-// ─────────────────────────────────────────────────────────────────
-// Generate Presentation
-// ─────────────────────────────────────────────────────────────────
-async function generate() {
-    const question  = qInput.value.trim();
-    const subjectId = document.getElementById('subject').value.trim();
-    const subjectName = subjectNames[subjectId] || subjectId;
-
-    if (!question) {
-        qInput.focus();
-        qInput.style.borderColor = '#ef4444';
-        setTimeout(() => qInput.style.borderColor = '', 1200);
-        return;
-    }
-    if (!subjectId) {
-        const sel = document.getElementById('subject');
-        sel.style.borderColor = '#ef4444';
-        setTimeout(() => sel.style.borderColor = '', 1400);
-        setStatus('⚠️ Please select a subject before generating');
-        return;
-    }
-
-    hidePanel();
-    document.getElementById('submitBtn').disabled = true;
-    document.getElementById('loading').style.display = 'block';
-    document.getElementById('result').innerHTML = '';
-    setStatus('');
-
-    try {
-        const res = await fetch(`${API_BASE}/ai-teaching-assistant`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                question,
-                subjectId:   subjectId,
-                subjectName: subjectName,
-                mode: 'full',
-                language: 'en-US'
-            })
-        });
-
-        if (!res.ok) {
-            const txt = await res.text();
-            throw new Error(`Server returned ${res.status}: ${txt.slice(0,200)}`);
+            panel.style.display = 'block';
+            setStatus(`✅ ${results.length} similar question${results.length > 1 ? 's' : ''} found in cache — click one to reuse instantly`);
         }
 
-        const data = await res.json();
-        renderResult(data);
+        function selectResult(idx) {
+            const r = allResults[idx];
+            if (!r) return;
+            qInput.value = r.question;
+            hidePanel();
+            setStatus(`✅ Selected: "${r.question}" (${Math.round(r.similarity * 100)}% match) — click Generate to load from cache`);
+        }
 
-    } catch (err) {
-        document.getElementById('result').innerHTML =
-            `<div class="error-box"><strong>Error:</strong> ${escHtml(err.message)}</div>`;
-    } finally {
-        document.getElementById('submitBtn').disabled = false;
-        document.getElementById('loading').style.display = 'none';
-    }
-}
+        function hidePanel() {
+            panel.style.display = 'none';
+            resultList.innerHTML = '';
+            activeIdx = -1;
+        }
 
-function renderResult(data) {
-    const resultDiv = document.getElementById('result');
+        // Keyboard navigation
+        qInput.addEventListener('keydown', e => {
+            const items = resultList.querySelectorAll('.result-item');
+            if (!items.length) return;
+            if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                activeIdx = Math.min(activeIdx + 1, items.length - 1);
+                updateActive(items);
+            } else if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                activeIdx = Math.max(activeIdx - 1, 0);
+                updateActive(items);
+            } else if (e.key === 'Enter' && activeIdx >= 0) {
+                e.preventDefault();
+                selectResult(activeIdx);
+            } else if (e.key === 'Escape') {
+                hidePanel();
+            }
+        });
 
-    if (data.error) {
-        resultDiv.innerHTML = `<div class="error-box">${escHtml(data.error)}</div>`;
-        return;
-    }
-    if (data.blocked) {
-        resultDiv.innerHTML = `<div class="blocked-box">
+        function updateActive(items) {
+            items.forEach((el, i) => el.classList.toggle('active', i === activeIdx));
+            if (items[activeIdx]) items[activeIdx].scrollIntoView({ block: 'nearest' });
+        }
+
+        // Close on outside click
+        document.addEventListener('click', e => {
+            if (!e.target.closest('.search-wrapper') && !e.target.closest('#search-panel')) {
+                hidePanel();
+            }
+        });
+
+        function setStatus(html) {
+            statusEl.innerHTML = html;
+        }
+
+        // Highlight query words inside result text
+        function highlightMatch(text, query) {
+            const escaped = escHtml(text);
+            const words = query.trim().split(/\s+/).filter(w => w.length > 1)
+                .map(w => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+            if (!words.length) return escaped;
+            const re = new RegExp(`(${words.join('|')})`, 'gi');
+            return escHtml(text).replace(re, '<mark style="background:#fef08a;border-radius:2px;padding:0 1px">$1</mark>');
+        }
+
+        function escHtml(s) {
+            return String(s)
+                .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        }
+
+        // ─────────────────────────────────────────────────────────────────
+        // Generate Presentation
+        // ─────────────────────────────────────────────────────────────────
+        async function generate() {
+            const question = qInput.value.trim();
+            const subjectId = document.getElementById('subject').value.trim();
+            const subjectName = subjectNames[subjectId] || subjectId;
+
+            if (!question) {
+                qInput.focus();
+                qInput.style.borderColor = '#ef4444';
+                setTimeout(() => qInput.style.borderColor = '', 1200);
+                return;
+            }
+            if (!subjectId) {
+                const sel = document.getElementById('subject');
+                sel.style.borderColor = '#ef4444';
+                setTimeout(() => sel.style.borderColor = '', 1400);
+                setStatus('⚠️ Please select a subject before generating');
+                return;
+            }
+
+            hidePanel();
+            document.getElementById('submitBtn').disabled = true;
+            document.getElementById('loading').style.display = 'block';
+            document.getElementById('result').innerHTML = '';
+            setStatus('');
+
+            try {
+                const res = await fetch(`${API_BASE}/ai-teaching-assistant`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        question,
+                        subjectId: subjectId,
+                        subjectName: subjectName,
+                        mode: 'full',
+                        language: 'en-US'
+                    })
+                });
+
+                if (!res.ok) {
+                    const txt = await res.text();
+                    throw new Error(`Server returned ${res.status}: ${txt.slice(0, 200)}`);
+                }
+
+                const data = await res.json();
+                renderResult(data);
+
+            } catch (err) {
+                document.getElementById('result').innerHTML =
+                    `<div class="error-box"><strong>Error:</strong> ${escHtml(err.message)}</div>`;
+            } finally {
+                document.getElementById('submitBtn').disabled = false;
+                document.getElementById('loading').style.display = 'none';
+            }
+        }
+
+        function renderResult(data) {
+            const resultDiv = document.getElementById('result');
+
+            if (data.error) {
+                resultDiv.innerHTML = `<div class="error-box">${escHtml(data.error)}</div>`;
+                return;
+            }
+            if (data.blocked) {
+                resultDiv.innerHTML = `<div class="blocked-box">
             <strong>⚠️ Off-topic:</strong> ${escHtml(data.message)}
         </div>`;
-        return;
-    }
+                return;
+            }
 
-    const cacheClass = data.cached ? 'cache-yes' : 'cache-no';
-    const cacheText  = data.cached ? '⚡ From Cache' : '🆕 Freshly Generated';
+            const cacheClass = data.cached ? 'cache-yes' : 'cache-no';
+            const cacheText = data.cached ? '⚡ From Cache' : '🆕 Freshly Generated';
 
-    let html = `
+            let html = `
         <div class="card">
             <div class="result-header">
                 <h2>Presentation</h2>
                 <span class="cache-badge ${cacheClass}">${cacheText}</span>
             </div>`;
 
-    // Build manim URL lookup: { "0": {url:..., duration_seconds:...}, ... }
-    const manimUrls = data.manimVideoUrls || {};
-    // Fallback image lookup from top-level imageUrls
-    const imageUrls = data.imageUrls || {};
+            // Build manim URL lookup: { "0": {url:..., duration_seconds:...}, ... }
+            const manimUrls = data.manimVideoUrls || {};
+            // Fallback image lookup from top-level imageUrls
+            const imageUrls = data.imageUrls || {};
 
-    (data.presentationSlides || []).forEach((slide, i) => {
-        const bullets   = (slide.bullet_points || []).map(b => `<li>${escHtml(b)}</li>`).join('');
-        const manimData = manimUrls[String(i)];
-        const manimUrl  = manimData?.url || null;
-        const imgUrl    = slide.infographicUrl || imageUrls[String(i)]?.url || '';
-        const audioUrls = data.slideAudioUrls || [];
-        const audioUrl  = slide.audioUrl || audioUrls[i] || '';
+            (data.presentationSlides || []).forEach((slide, i) => {
+                const bullets = (slide.bullet_points || []).map(b => `<li>${escHtml(b)}</li>`).join('');
+                const manimData = manimUrls[String(i)];
+                const manimUrl = manimData?.url || null;
+                const imgUrl = slide.infographicUrl || imageUrls[String(i)]?.url || '';
+                const audioUrls = data.slideAudioUrls || [];
+                const audioUrl = slide.audioUrl || audioUrls[i] || '';
 
-        let mediaHtml = '';
+                let mediaHtml = '';
 
-        if (manimUrl) {
-            // ── Synced player: video (visible master) + audio (hidden slave) ──
-            mediaHtml = `
+                if (manimUrl) {
+                    // ── Synced player: video (visible master) + audio (hidden slave) ──
+                    mediaHtml = `
                 <div class="slide-media-label">🎬 Manim animation (${Math.round(manimData.duration_seconds || 0)}s) — audio synced</div>
                 <div class="sync-player" id="sync-wrap-${i}">
                     <video id="manim-vid-${i}" controls
@@ -782,114 +898,114 @@ function renderResult(data) {
                     <span class="sync-status" id="sync-status-${i}">🔊 synced</span>
                 </div>
                 <audio id="manim-aud-${i}" src="${escHtml(audioUrl)}" style="display:none" preload="auto"></audio>`;
-        }
+                }
 
-        if (imgUrl) {
-            const imgLabel = manimUrl
-                ? `<div class="slide-media-label" style="margin-top:12px">🖼 Infographic</div>`
-                : '';
-            mediaHtml += `${imgLabel}<img src="${escHtml(imgUrl)}" alt="Infographic" onerror="this.style.display='none'">`;
-        }
+                if (imgUrl) {
+                    const imgLabel = manimUrl
+                        ? `<div class="slide-media-label" style="margin-top:12px">🖼 Infographic</div>`
+                        : '';
+                    mediaHtml += `${imgLabel}<img src="${escHtml(imgUrl)}" alt="Infographic" onerror="this.style.display='none'">`;
+                }
 
-        // Image-only slides: show normal audio player
-        if (!manimUrl && audioUrl) {
-            mediaHtml += `<audio controls src="${escHtml(audioUrl)}"></audio>`;
-        }
+                // Image-only slides: show normal audio player
+                if (!manimUrl && audioUrl) {
+                    mediaHtml += `<audio controls src="${escHtml(audioUrl)}"></audio>`;
+                }
 
-        const manimBadge = manimUrl ? `<span class="manim-badge">✨ Manim</span>` : '';
+                const manimBadge = manimUrl ? `<span class="manim-badge">✨ Manim</span>` : '';
 
-        html += `
+                html += `
             <div class="slide">
                 <h3>Slide ${i + 1}: ${escHtml(slide.title || 'Untitled')}${manimBadge}</h3>
                 ${bullets ? `<ul>${bullets}</ul>` : ''}
                 ${slide.narration ? `<div class="slide-narration">${escHtml(slide.narration)}</div>` : ''}
                 ${mediaHtml}
             </div>`;
-    });
+            });
 
-    html += `</div>`;
-    resultDiv.innerHTML = html;
+            html += `</div>`;
+            resultDiv.innerHTML = html;
 
-    // Wire up sync players after DOM is written
-    (data.presentationSlides || []).forEach((_, i) => {
-        const vid      = document.getElementById(`manim-vid-${i}`);
-        const aud      = document.getElementById(`manim-aud-${i}`);
-        const statusEl = document.getElementById(`sync-status-${i}`);
-        if (vid && aud) syncPlayer(vid, aud, statusEl);
-    });
-}
+            // Wire up sync players after DOM is written
+            (data.presentationSlides || []).forEach((_, i) => {
+                const vid = document.getElementById(`manim-vid-${i}`);
+                const aud = document.getElementById(`manim-aud-${i}`);
+                const statusEl = document.getElementById(`sync-status-${i}`);
+                if (vid && aud) syncPlayer(vid, aud, statusEl);
+            });
+        }
 
-// ─────────────────────────────────────────────────────────────────
-// Sync Engine — video is master, audio is slave
-// ─────────────────────────────────────────────────────────────────
-function syncPlayer(vid, aud, statusEl) {
-    let syncLock  = false;
-    let driftTimer = null;
+        // ─────────────────────────────────────────────────────────────────
+        // Sync Engine — video is master, audio is slave
+        // ─────────────────────────────────────────────────────────────────
+        function syncPlayer(vid, aud, statusEl) {
+            let syncLock = false;
+            let driftTimer = null;
 
-    function setStatus(text) { if (statusEl) statusEl.textContent = text; }
+            function setStatus(text) { if (statusEl) statusEl.textContent = text; }
 
-    // ── video → audio events ──────────────────────────────────────
-    vid.addEventListener('play', () => {
-        if (syncLock) return;
-        aud.currentTime = vid.currentTime;
-        aud.play().catch(() => {});
-        setStatus('🔊 playing');
-        startDrift();
-    });
-
-    vid.addEventListener('pause', () => {
-        if (syncLock) return;
-        aud.pause();
-        setStatus('⏸ paused');
-        stopDrift();
-    });
-
-    vid.addEventListener('seeked', () => {
-        aud.currentTime = vid.currentTime;
-    });
-
-    vid.addEventListener('ratechange', () => {
-        aud.playbackRate = vid.playbackRate;
-    });
-
-    vid.addEventListener('ended', () => {
-        aud.pause();
-        aud.currentTime = 0;
-        setStatus('✅ done');
-        stopDrift();
-    });
-
-    vid.addEventListener('waiting', () => {
-        // Video buffering: freeze audio to stay in sync
-        aud.pause();
-        setStatus('⏳ buffering…');
-    });
-
-    vid.addEventListener('playing', () => {
-        // Video resumed from buffer
-        aud.currentTime = vid.currentTime;
-        aud.play().catch(() => {});
-        setStatus('🔊 playing');
-    });
-
-    // ── Drift correction every 2s ─────────────────────────────────
-    function startDrift() {
-        stopDrift();
-        driftTimer = setInterval(() => {
-            if (!vid.paused && Math.abs(aud.currentTime - vid.currentTime) > 0.35) {
+            // ── video → audio events ──────────────────────────────────────
+            vid.addEventListener('play', () => {
+                if (syncLock) return;
                 aud.currentTime = vid.currentTime;
+                aud.play().catch(() => { });
+                setStatus('🔊 playing');
+                startDrift();
+            });
+
+            vid.addEventListener('pause', () => {
+                if (syncLock) return;
+                aud.pause();
+                setStatus('⏸ paused');
+                stopDrift();
+            });
+
+            vid.addEventListener('seeked', () => {
+                aud.currentTime = vid.currentTime;
+            });
+
+            vid.addEventListener('ratechange', () => {
+                aud.playbackRate = vid.playbackRate;
+            });
+
+            vid.addEventListener('ended', () => {
+                aud.pause();
+                aud.currentTime = 0;
+                setStatus('✅ done');
+                stopDrift();
+            });
+
+            vid.addEventListener('waiting', () => {
+                // Video buffering: freeze audio to stay in sync
+                aud.pause();
+                setStatus('⏳ buffering…');
+            });
+
+            vid.addEventListener('playing', () => {
+                // Video resumed from buffer
+                aud.currentTime = vid.currentTime;
+                aud.play().catch(() => { });
+                setStatus('🔊 playing');
+            });
+
+            // ── Drift correction every 2s ─────────────────────────────────
+            function startDrift() {
+                stopDrift();
+                driftTimer = setInterval(() => {
+                    if (!vid.paused && Math.abs(aud.currentTime - vid.currentTime) > 0.35) {
+                        aud.currentTime = vid.currentTime;
+                    }
+                }, 2000);
             }
-        }, 2000);
-    }
 
-    function stopDrift() {
-        if (driftTimer) { clearInterval(driftTimer); driftTimer = null; }
-    }
+            function stopDrift() {
+                if (driftTimer) { clearInterval(driftTimer); driftTimer = null; }
+            }
 
-    // Preload audio so it's ready when video starts
-    aud.load();
-}
-</script>
+            // Preload audio so it's ready when video starts
+            aud.load();
+        }
+    </script>
 </body>
-</html>
 
+</html>

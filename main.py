@@ -1,6 +1,7 @@
 import os, uuid, base64, asyncio
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy import text, update, select
-from fastapi import FastAPI, Depends, BackgroundTasks
+from fastapi import FastAPI, Depends, BackgroundTasks, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -383,7 +384,13 @@ async def save_presentation_audio(body: dict, db: AsyncSession = Depends(get_db)
 # POST /ai-teaching-assistant  (MAIN ENDPOINT)
 # ─────────────────────────────────────────────────────────
 @app.post("/ai-teaching-assistant")
-async def teaching_assistant(body: dict, db: AsyncSession = Depends(get_db)):
+async def teaching_assistant(request: Request, body: dict, db: AsyncSession = Depends(get_db)):
+    # ── Caller identification logging (temporary debug) ──────────────────────
+    caller_ip        = request.headers.get("x-forwarded-for", request.client.host if request.client else "unknown")
+    caller_agent     = request.headers.get("user-agent", "(no user-agent)")
+    caller_origin    = request.headers.get("origin", request.headers.get("referer", "(no origin)"))
+    print(f"[CALLER] ip={caller_ip} | origin={caller_origin} | agent={caller_agent}")
+    # ────────────────────────────────────────────────────────────────────────
     mode         = body.get("mode", "full")
     question     = body.get("question", "")
     subject_name = body.get("subjectName", "")
@@ -415,6 +422,7 @@ async def teaching_assistant(body: dict, db: AsyncSession = Depends(get_db)):
         return {"error": "subjectId is required", "hint": "Pass subjectId in the request body"}
 
     q_hash = hash_question(question)
+
 
     # [L1] Redis exact hash (~0.5ms)
     cached = await get_from_cache(q_hash, subject_id)
@@ -457,6 +465,19 @@ async def teaching_assistant(body: dict, db: AsyncSession = Depends(get_db)):
         await sync_cache_row_to_local(subject_id, str(row.id), data, language, db)
         return data
     print(f"[L3] ✗ MISS")
+
+    # ── Distributed lock: prevent concurrent stampede for the same question ──
+    # If another worker is already generating this exact question, wait for it
+    # instead of racing to generate (and INSERT) a duplicate.
+    lock_acquired = await acquire_lock(q_hash, subject_id, ttl=90)
+    if not lock_acquired:
+        print(f"[Lock] Another worker is generating '{question[:50]}' — waiting…")
+        waited_data = await wait_for_cache(q_hash, subject_id, max_wait=85)
+        if waited_data:
+            print(f"[Lock] Got result from waiting worker — returning cached")
+            return {**waited_data, "cached": True, "cache_layer": "L_lock_wait"}
+        # Timeout — fall through and try to generate ourselves
+        print(f"[Lock] Timeout waiting — proceeding to generate")
 
     # Bug #7 fix: initialize query_vec to None so the L5 block always has
     # a defined name, even if the L4 try-block raises before assigning it.
@@ -628,7 +649,64 @@ async def teaching_assistant(body: dict, db: AsyncSession = Depends(get_db)):
         realtime_tier=2,           # tier 2 = OpenRouter + Sarvam (CPU cloud APIs)
     )
     db.add(new_row)
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError:
+        # Race condition: another concurrent request inserted the same
+        # (question_hash, subject_id, variation_number) just before us.
+        # Roll back this session and fetch the winner's row.
+        await db.rollback()
+        
+        # Cleanup orphaned files on local disk
+        if subject_id:
+            try:
+                from core.local_storage import delete_cache_files
+                delete_cache_files(subject_id, cache_id)
+                print(f"[DB] Rollback cleanup: Deleted local orphaned folder for cache_id={cache_id}")
+            except Exception as e:
+                print(f"[DB] Cleanup failed for {cache_id}: {e}")
+
+        print(f"[DB] Duplicate INSERT race — fetching existing row for hash={q_hash[:8]}…")
+        existing = (await db.execute(
+            select(TeachingCache)
+            .where(TeachingCache.question_hash == q_hash)
+            .where(TeachingCache.subject_id == subject_id)
+            .order_by(TeachingCache.usage_count.desc())
+            .limit(1)
+        )).scalar_one_or_none()
+        if existing:
+            result_data = {
+                "cached": True,
+                "cache_layer": "L3_postgres_race_recovery",
+                "cache_id": str(existing.id),
+                "isDocGrounded": is_doc_grounded,
+                "presentationSlides": existing.presentation_slides,
+                "latexFormulas": existing.latex_formulas,
+                "keyPoints": [],
+                "followUpQuestions": [],
+                "slideAudioUrls": existing.slide_audio_urls.get("urls", []) if existing.slide_audio_urls else [],
+                "totalDurationSeconds": existing.total_duration_seconds,
+                "manimVideoUrls": existing.manim_video_urls or {},
+                "imageUrls": existing.image_urls or {},
+            }
+            await set_to_cache(q_hash, subject_id, result_data)
+            await release_lock(q_hash, subject_id)
+            return result_data
+        # If we can't find the row either (extremely unlikely), just return what we generated
+        print(f"[DB] Could not recover existing row — returning in-memory result")
+        await release_lock(q_hash, subject_id)
+        return {
+            "cached": False, "cache_layer": "GENERATED_NO_DB",
+            "cache_id": cache_id,
+            "isDocGrounded": is_doc_grounded,
+            "presentationSlides": slides,
+            "latexFormulas": slides_data.get("latex_formulas", []),
+            "keyPoints": slides_data.get("key_points", []),
+            "followUpQuestions": slides_data.get("follow_up_questions", []),
+            "slideAudioUrls": audios,
+            "totalDurationSeconds": total_duration,
+            "manimVideoUrls": {}, "imageUrls": {},
+        }
 
     result_data = {
         "cached": False,
@@ -644,6 +722,9 @@ async def teaching_assistant(body: dict, db: AsyncSession = Depends(get_db)):
         "manimVideoUrls": {},   # empty for real-time; pre-gen fills this via pregen pipeline
         "imageUrls": {},
     }
+
+    # Release the distributed lock now that the row is committed
+    await release_lock(q_hash, subject_id)
 
     # Warm L1 + L2 caches
     await set_to_cache(q_hash, subject_id, result_data)

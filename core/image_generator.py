@@ -33,13 +33,13 @@ async def generate_one_image(slide: dict, cache_id: str, idx: int, subject_id: s
         "X-Title": "AI Teaching API",
     }
     payload = {
-        "model": "google/gemini-3.1-flash-image-preview",
+        "model": "black-forest-labs/flux-schnell",
         "messages": [{"role": "user", "content": prompt}],
     }
 
     try:
         async with IMAGE_SEMAPHORE:
-            print(f"[Image] Slide {idx} → calling OpenRouter (Gemini)")
+            print(f"[Image] Slide {idx} → calling OpenRouter (Flux)")
             async with httpx.AsyncClient(timeout=120) as client:
                 resp = await client.post(url, headers=headers, json=payload)
                 resp.raise_for_status()
