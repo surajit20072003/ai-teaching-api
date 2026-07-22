@@ -296,10 +296,11 @@ async def main(args: argparse.Namespace) -> None:
 
     db_factory = AsyncSessionLocal
 
+    manim_provider = args.manim_provider
     log.info("=" * 60)
     log.info("  ch1_pregen.py -- Chapter 1 Bulk Generation")
-    log.info(f"  access_tier=free | Log: {_LOG_FILE.name}")
-    log.info("=" * 60)
+    log.info(f"  access_tier=free | manim_provider={manim_provider} | Log: {_LOG_FILE.name}")
+    log.info("="  * 60)
 
     # Resolve subjects + Chapter 1 IDs
     async with db_factory() as db:
@@ -508,12 +509,16 @@ async def main(args: argparse.Namespace) -> None:
     manim_ready = False
     if manim_rows_needed:
         log.info(f"[Phase C] Found {total_manim_slides} formula slide(s) across all questions")
-        log.info(f"[Phase C] Reloading Ollama for Manim Python code generation...")
-        try:
-            manim_ready = await prepare_for_manim_generation()
-            log.info(f"[Phase C] Ollama {'✓ ready — will generate Manim animations' if manim_ready else '⚠ timed out — Manim skipped, keeping static images'}")
-        except Exception as e:
-            log.warning(f"[Phase C] Ollama load failed (non-fatal): {e}")
+        if manim_provider == "openrouter":
+            log.info(f"[Phase C] Using OpenRouter (cloud) for Manim code generation — no local Ollama needed")
+            manim_ready = True   # OpenRouter is always available; no GPU warmup required
+        else:
+            log.info(f"[Phase C] Using local Ollama — reloading model for Manim code generation...")
+            try:
+                manim_ready = await prepare_for_manim_generation()
+                log.info(f"[Phase C] Ollama {'✓ ready — will generate Manim animations' if manim_ready else '⚠ timed out — Manim skipped, keeping static images'}")
+            except Exception as e:
+                log.warning(f"[Phase C] Ollama load failed (non-fatal): {e}")
     else:
         log.info("[Phase C] No formula slides found — Manim phase skipped entirely")
 
@@ -539,10 +544,10 @@ async def main(args: argparse.Namespace) -> None:
         manim_video_urls: dict = {}
         manim_slides_here = [s for s in enriched_slides if s.get("visual_type") == "manim"]
         if manim_slides_here and manim_ready:
-            log.info(f"[Phase C]   → Generating Manim animations for {len(manim_slides_here)} formula slide(s)...")
+            log.info(f"[Phase C]   → Generating Manim via {manim_provider} for {len(manim_slides_here)} formula slide(s)...")
             try:
                 manim_video_urls = await _pregen_manim_only(
-                    row, enriched_slides, audio_durations, provider="local"
+                    row, enriched_slides, audio_durations, provider=manim_provider
                 )
                 log.info(f"[Phase C]   ✓ {len(manim_video_urls)} Manim video(s) rendered")
             except Exception as e:
@@ -582,5 +587,12 @@ if __name__ == "__main__":
                         help="Only run one subject: social, science, math (default: all 3)")
     parser.add_argument("--dry-run", action="store_true",
                         help="Show what would be generated without running")
+    parser.add_argument(
+        "--manim-provider",
+        type=str,
+        default="openrouter",
+        choices=["openrouter", "local"],
+        help="LLM provider for Manim code generation: 'openrouter' (cloud, better quality, default) or 'local' (Ollama on GPU server)"
+    )
     args = parser.parse_args()
     asyncio.run(main(args))
