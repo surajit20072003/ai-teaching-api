@@ -186,7 +186,8 @@ async def ai_text_answer(request: Request, body: dict, db: AsyncSession = Depend
                   "key_points": sem_row["key_points"] or [], "sources": sem_row["sources"] or [],
                   "is_doc_grounded": sem_row["is_doc_grounded"],
                   "matched_question": sem_row["question_text"], "similarity": sim, "access_tier": sem_row["access_tier"]}
-        await set_text_to_cache(q_hash, subject_id, {**result, "_embedding": question_embedding})
+        # Do NOT save to L1 Redis under this new q_hash for a semantic match!
+        # Because if we do, Question B permanently serves Question A's answer.
         slide_preview, suggestions = await enrich_response(question_embedding, subject_id, db, q_hash)
         return {**result, "slide_preview": slide_preview, "suggestions": suggestions}
     print(f"[L3] MISS")

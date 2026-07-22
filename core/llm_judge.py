@@ -5,7 +5,7 @@ import os, httpx, logging
 logger = logging.getLogger(__name__)
 
 JUDGE_MODEL    = "google/gemini-2.5-flash-lite"
-MIN_THRESHOLD  = 0.60
+MIN_THRESHOLD  = 0.70
 MAX_CANDIDATES = 5
 
 

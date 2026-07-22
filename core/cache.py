@@ -13,19 +13,15 @@ def get_redis():
     return _redis
 
 def hash_question(text: str) -> str:
-    """Normalize and SHA-256 hash a question string by sorting keywords."""
-    text = unicodedata.normalize("NFKC", text).lower()
-    text = re.sub(r'[^\w\s]', '', text)
-
-    # Simple stopword list
-    stopwords = {"what", "is", "the", "of", "and", "a", "an", "how", "why", "to", "in", "for", "on", "with"}
-
-    # Split, filter, sort
-    words = text.split()
-    filtered_words = [w for w in words if w not in stopwords]
-    sorted_words = sorted(filtered_words)
-
-    normalized_text = " ".join(sorted_words)
+    """Normalize and SHA-256 hash a question string cleanly without destroying word order."""
+    text = unicodedata.normalize("NFKC", text).lower().strip()
+    text = re.sub(r'\s+', ' ', text)  # collapse multiple spaces
+    text = re.sub(r'[^\w\s]', '', text)  # remove punctuation
+    
+    # Split and remove empty strings, but keep order
+    words = [w for w in text.split() if w]
+    
+    normalized_text = " ".join(words)
     return hashlib.sha256(normalized_text.encode()).hexdigest()[:32]
 
 def cache_key(q_hash: str, subject_id: str = "") -> str:

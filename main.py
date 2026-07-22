@@ -156,7 +156,7 @@ async def search_questions(
 
         # Source 1: Q&A cache
         cache_sql = text("""
-            SELECT question_text, subject_id, usage_count,
+            SELECT id, question_hash, access_tier, question_text, subject_id, usage_count,
                    1 - (question_embedding <=> CAST(:vec AS vector)) AS similarity
             FROM teaching_qa_cache
             WHERE question_embedding IS NOT NULL
@@ -191,6 +191,9 @@ async def search_questions(
             "qa_cache_results": [
                 {
                     "source": "qa_cache",
+                    "cache_id": str(r.id),
+                    "question_hash": r.question_hash,
+                    "access_tier": r.access_tier,
                     "question": r.question_text,
                     "subject_id": r.subject_id,
                     "usage_count": r.usage_count,
@@ -594,14 +597,18 @@ async def teaching_assistant(request: Request, body: dict, db: AsyncSession = De
     # Apply tier filter at SQL level — safest approach, no post-fetch leaks
     tier_sql_filter = "AND access_tier = 'free'" if user_tier == "free" else ""
     print(f"[L3] hash={q_hash[:8]}… subject={subject_id[:8]}… question='{question[:50]}'")
-    row = (await db.execute(
+    l3_query = (
         select(TeachingCache)
         .where(TeachingCache.question_hash == q_hash)
         .where(TeachingCache.subject_id == subject_id)
-        .where(text(f"access_tier IN ('free') OR '{user_tier}' = 'pro'"))
-        .order_by(TeachingCache.usage_count.desc())
-        .limit(1)
+    )
+    # For free users, additionally restrict to free-tier content only
+    if user_tier == "free":
+        l3_query = l3_query.where(TeachingCache.access_tier == "free")
+    row = (await db.execute(
+        l3_query.order_by(TeachingCache.usage_count.desc()).limit(1)
     )).scalar_one_or_none()
+
 
     if row and row.presentation_slides:
         print(f"[L3] HIT | cache_tier={row.access_tier} | user_tier={user_tier}")
@@ -662,7 +669,7 @@ async def teaching_assistant(request: Request, body: dict, db: AsyncSession = De
             WHERE question_embedding IS NOT NULL
               AND subject_id = :subj
               AND presentation_slides IS NOT NULL
-              AND 1 - (question_embedding <=> CAST(:vec AS vector)) > 0.60
+              AND 1 - (question_embedding <=> CAST(:vec AS vector)) > 0.70
               {tier_cache_filter}
             ORDER BY sim_score DESC LIMIT 5
         """)
@@ -699,10 +706,10 @@ async def teaching_assistant(request: Request, body: dict, db: AsyncSession = De
                     return _SUBSCRIBE_RESPONSE
                 print(f"[L4] ✓ LLM Judge selected a cache hit")
                 data = winner["answer_data"]
-                await set_to_cache(q_hash, subject_id, data)
-                await write_slide_cache(subject_id, q_hash, data)
-                # Background sync: fire-and-forget, must NOT be inside try/except
-                # to avoid swallowing the return and falling through to L5 generation.
+                data["matched_question"] = winner["question"]
+                # DO NOT write to L1/L2 cache — L4 is a semantic match, not exact.
+                # Writing here poisons the cache: Question B's hash gets Question A's slides permanently.
+                # Background sync only: fire-and-forget
                 asyncio.create_task(
                     sync_cache_row_to_local(subject_id, data["cache_id"], data, language, db)
                 )
