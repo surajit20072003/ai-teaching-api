@@ -25,6 +25,8 @@ from core.llm_judge import judge_and_pick
 from routers.documents import router as documents_router
 from routers.pregen import router as pregen_router
 from routers.questions import router as questions_router
+from routers.text_answer import router as text_answer_router
+from routers.admin_tiers import router as admin_tiers_router
 
 
 # ─────────────────────────────────────────────────────────
@@ -94,6 +96,8 @@ app.add_middleware(
 app.include_router(documents_router)
 app.include_router(pregen_router)
 app.include_router(questions_router)
+app.include_router(text_answer_router)
+app.include_router(admin_tiers_router)
 
 @app.on_event("startup")
 async def startup_event():
@@ -380,6 +384,118 @@ async def save_presentation_audio(body: dict, db: AsyncSession = Depends(get_db)
     return {"success": True, "audioUrls": audio_urls, "totalDuration": round(total_dur, 2)}
 
 
+
+_SUBSCRIBE_RESPONSE = {
+    "blocked": True,
+    "reason":  "subscription_required",
+    "message": (
+        "This topic is part of the Pro course. "
+        "Upgrade your plan to access full AI-generated presentations, "
+        "audio explanations, and more."
+    ),
+}
+
+# ─────────────────────────────────────────────────────────
+# Ghost generation helper — silent background cache warming
+# Called via asyncio.create_task() when a free user asks
+# about a pro-tier topic not yet in cache.
+# ─────────────────────────────────────────────────────────
+async def _ghost_generate_and_cache(
+    question: str,
+    subject_id: str,
+    subject_name: str,
+    language: str,
+    q_hash: str,
+    vec_str: str,
+):
+    """
+    Silently generates a full presentation using PRO document chunks as context.
+    The free user never receives this — they got the subscribe popup.
+    Result is saved to teaching_qa_cache so the next pro user (or upgraded
+    free user) asking this question gets an instant cache hit.
+    """
+    try:
+        async with AsyncSessionLocal() as bg_db:
+            # Fetch pro chunks (no tier filter)
+            pro_sql = text("""
+                SELECT dc.chunk_text, dc.section_title, d.title AS doc_title,
+                       1 - (dc.chunk_embedding <=> CAST(:vec AS vector)) AS sim
+                FROM document_chunks dc
+                JOIN documents d ON d.id = dc.document_id
+                WHERE dc.chunk_embedding IS NOT NULL
+                  AND dc.subject_id = :subj
+                  AND d.status = 'ready'
+                  AND 1 - (dc.chunk_embedding <=> CAST(:vec AS vector)) > 0.50
+                ORDER BY sim DESC LIMIT 3
+            """)
+            rows = (await bg_db.execute(pro_sql, {"vec": vec_str, "subj": subject_id})).fetchall()
+            if not rows:
+                print(f"[Ghost] No pro chunks found — aborting")
+                return
+
+            context = "\n\n".join(
+                f"[{r.doc_title} / {r.section_title or 'Section'}]\n{r.chunk_text}"
+                for r in rows
+            )
+            slides_data = await generate_slides(question, subject_name, context=context)
+            slides      = slides_data.get("presentation_slides", [])
+            cache_id    = str(uuid.uuid4())
+
+            images, audios = await asyncio.gather(
+                generate_all_images(slides, cache_id, subject_id),
+                generate_all_audios(slides, cache_id, language, subject_id),
+            )
+            for i, s in enumerate(slides):
+                s["infographicUrl"] = images[i] if i < len(images) else ""
+                audio_info = next((a for a in audios if a and a.get("slideIndex") == i), None)
+                if audio_info:
+                    s["audioUrl"] = audio_info.get("audioUrl")
+                    s["duration"] = audio_info.get("duration")
+
+            # Build image_urls dict for DB
+            image_urls_dict = {
+                str(i): {"url": images[i], "local_path": ""} if i < len(images) else {}
+                for i in range(len(slides))
+            }
+            audio_urls_list = [a for a in audios if a]
+            total_dur = sum(a.get("duration", 0) for a in audio_urls_list)
+
+            row = TeachingCache(
+                id                     = uuid.UUID(cache_id),
+                question_hash          = q_hash,
+                question_text          = question,
+                subject_id             = subject_id,
+                language               = language,
+                presentation_slides    = slides,
+                slide_audio_urls       = {"language": language, "urls": audio_urls_list},
+                total_duration_seconds = round(total_dur, 2),
+                image_urls             = image_urls_dict,
+                is_doc_grounded        = True,
+                realtime_generated     = True,
+                realtime_tier          = 2,
+                access_tier            = "pro",
+            )
+            bg_db.add(row)
+            await bg_db.commit()
+
+            # Store embedding for future semantic cache hits
+            try:
+                from core.embeddings import embed_async as _ea, vec_to_pg_str as _v2pg
+                q_vec = await _ea(question)
+                await bg_db.execute(
+                    text("UPDATE teaching_qa_cache SET question_embedding = CAST(:e AS vector) WHERE id = :id"),
+                    {"e": _v2pg(q_vec), "id": cache_id}
+                )
+                await bg_db.commit()
+            except Exception:
+                pass
+
+            print(f"[Ghost] 👻 Cached '{question[:50]}' (cache_id={cache_id[:8]})")
+
+    except Exception as e:
+        print(f"[Ghost] Failed silently (non-fatal): {e}")
+
+
 # ─────────────────────────────────────────────────────────
 # POST /ai-teaching-assistant  (MAIN ENDPOINT)
 # ─────────────────────────────────────────────────────────
@@ -396,6 +512,10 @@ async def teaching_assistant(request: Request, body: dict, db: AsyncSession = De
     subject_name = body.get("subjectName", "")
     subject_id   = body.get("subjectId", "")
     language     = body.get("language", "hi-IN")
+    user_tier    = (body.get("userTier") or "pro").strip().lower()
+    if user_tier not in ("free", "pro"):
+        user_tier = "pro"
+    print(f"[TIER] userTier_raw={body.get('userTier')!r} → resolved={user_tier}")
 
     # ── MODE: detect_topic ───────────────────────────────
     if mode == "detect_topic":
@@ -424,31 +544,70 @@ async def teaching_assistant(request: Request, body: dict, db: AsyncSession = De
     q_hash = hash_question(question)
 
 
+    language     = body.get("language", "hi-IN")
+
+    # ── MODE: detect_topic ───────────────────────────────
+    if mode == "detect_topic":
+        return await detect_topic(question, subject_name)
+
+    # ── MODE: doubt ──────────────────────────────────────
+    if mode == "doubt":
+        question_text = body.get("questionText", question)
+        correct       = body.get("correctAnswer", "")
+        student_ans   = body.get("studentAnswer", "")
+        doubt_q       = f"Why is '{correct}' correct and '{student_ans}' wrong for: {question_text}"
+        slides_data   = await generate_slides(doubt_q, subject_name)
+        slides        = slides_data.get("presentation_slides", [])[:1]
+        cache_id      = str(uuid.uuid4())
+        images        = await generate_all_images(slides, cache_id)
+        for i, s in enumerate(slides):
+            s["infographicUrl"] = images[i] if i < len(images) else ""
+        return {"presentationSlides": slides, "isDoubtExplanation": True, "cache_id": cache_id}
+
+    # ── MODE: full ───────────────────────────────────────
+    if not question:
+        return {"error": "question is required"}
+    if not subject_id:
+        return {"error": "subjectId is required", "hint": "Pass subjectId in the request body"}
+
+    q_hash = hash_question(question)
+
     # [L1] Redis exact hash (~0.5ms)
     cached = await get_from_cache(q_hash, subject_id)
     if cached:
+        if cached.get("access_tier", "free") == "pro" and user_tier == "free":
+            return _SUBSCRIBE_RESPONSE
         await increment_usage(q_hash, subject_id)
         return {**cached, "cached": True, "cache_layer": "L1_redis"}
 
     # [L2] Local disk JSON (~1ms, avoids DB round-trip)
     local_cached = await read_slide_cache(subject_id, q_hash)
     if local_cached:
-        print(f"[L2] Local cache HIT for '{question[:60]}'")
-        await set_to_cache(q_hash, subject_id, local_cached)
+        tier_in_cache = local_cached.get("access_tier", "free")
+        print(f"[L2] HIT | cache_tier={tier_in_cache} | user_tier={user_tier}")
+        if tier_in_cache == "pro" and user_tier == "free":
+            print(f"[L2] BLOCKED — pro content, free user")
+            return _SUBSCRIBE_RESPONSE
         return {**local_cached, "cached": True, "cache_layer": "L2_local_disk"}
 
     # [L3] Postgres exact hash (~3ms)
+    # Apply tier filter at SQL level — safest approach, no post-fetch leaks
+    tier_sql_filter = "AND access_tier = 'free'" if user_tier == "free" else ""
     print(f"[L3] hash={q_hash[:8]}… subject={subject_id[:8]}… question='{question[:50]}'")
     row = (await db.execute(
         select(TeachingCache)
         .where(TeachingCache.question_hash == q_hash)
         .where(TeachingCache.subject_id == subject_id)
+        .where(text(f"access_tier IN ('free') OR '{user_tier}' = 'pro'"))
         .order_by(TeachingCache.usage_count.desc())
         .limit(1)
     )).scalar_one_or_none()
 
     if row and row.presentation_slides:
-        print(f"[L3] ✓ HIT — returning pre-generated slides")
+        print(f"[L3] HIT | cache_tier={row.access_tier} | user_tier={user_tier}")
+        if row.access_tier == "pro" and user_tier == "free":
+            print(f"[L3] BLOCKED — pro content, free user")
+            return _SUBSCRIBE_RESPONSE
         data = {
             "cached": True, "cache_layer": "L3_postgres",
             "cache_id": str(row.id),
@@ -458,10 +617,11 @@ async def teaching_assistant(request: Request, body: dict, db: AsyncSession = De
             "totalDurationSeconds": row.total_duration_seconds,
             "manimVideoUrls": row.manim_video_urls or {},
             "imageUrls": row.image_urls or {},
+            "access_tier": row.access_tier,
         }
+        print(f"[L3] SERVING to {user_tier} user")
         await set_to_cache(q_hash, subject_id, data)
         await write_slide_cache(subject_id, q_hash, data)
-        # Background: download B2 media to CPU /app/storage/ if not already local
         await sync_cache_row_to_local(subject_id, str(row.id), data, language, db)
         return data
     print(f"[L3] ✗ MISS")
@@ -491,16 +651,19 @@ async def teaching_assistant(request: Request, body: dict, db: AsyncSession = De
         print(f"[L4] ✓ Embedding generated ({len(query_vec)} dims)")
         vec_str   = vec_to_pg_str(query_vec)
 
-        sem_sql = text("""
+        # L4 SQL: filter by tier at DB level — free users NEVER see pro rows
+        tier_cache_filter = "AND access_tier = 'free'" if user_tier == "free" else ""
+        sem_sql = text(f"""
             SELECT id, question_text, presentation_slides, latex_formulas,
                    slide_audio_urls, total_duration_seconds,
-                   manim_video_urls, image_urls,
+                   manim_video_urls, image_urls, access_tier,
                    1 - (question_embedding <=> CAST(:vec AS vector)) AS sim_score
             FROM teaching_qa_cache
             WHERE question_embedding IS NOT NULL
               AND subject_id = :subj
               AND presentation_slides IS NOT NULL
               AND 1 - (question_embedding <=> CAST(:vec AS vector)) > 0.60
+              {tier_cache_filter}
             ORDER BY sim_score DESC LIMIT 5
         """)
         rows = (await db.execute(sem_sql, {"vec": vec_str, "subj": subject_id})).fetchall()
@@ -522,18 +685,27 @@ async def teaching_assistant(request: Request, body: dict, db: AsyncSession = De
                         "totalDurationSeconds": r.total_duration_seconds,
                         "manimVideoUrls": (r.manim_video_urls or {}) if hasattr(r, "manim_video_urls") else {},
                         "imageUrls": (r.image_urls or {}) if hasattr(r, "image_urls") else {},
+                        "access_tier": r.access_tier,
                     }
                 }
                 for r in rows
             ]
             winner = await judge_and_pick(question, judge_candidates, subject_id)
             if winner:
+                winner_tier = winner["answer_data"].get("access_tier", "free")
+                print(f"[L4] Winner | cache_tier={winner_tier} | user_tier={user_tier}")
+                if winner_tier == "pro" and user_tier == "free":
+                    print(f"[L4] BLOCKED — pro content, free user")
+                    return _SUBSCRIBE_RESPONSE
                 print(f"[L4] ✓ LLM Judge selected a cache hit")
                 data = winner["answer_data"]
                 await set_to_cache(q_hash, subject_id, data)
                 await write_slide_cache(subject_id, q_hash, data)
-                # Background: download B2 media to CPU /app/storage/ if not already local
-                await sync_cache_row_to_local(subject_id, data["cache_id"], data, language, db)
+                # Background sync: fire-and-forget, must NOT be inside try/except
+                # to avoid swallowing the return and falling through to L5 generation.
+                asyncio.create_task(
+                    sync_cache_row_to_local(subject_id, data["cache_id"], data, language, db)
+                )
                 return data
             print(f"[L4] LLM Judge said NEW — no close match")
         else:
@@ -581,8 +753,13 @@ async def teaching_assistant(request: Request, body: dict, db: AsyncSession = De
             query_vec = await embed_async(question)
             vec_str   = vec_to_pg_str(query_vec)
 
-        rag_sql = text("""
-            SELECT dc.chunk_text, dc.section_title, d.title AS doc_title,
+        # ── Tier-filtered RAG query ───────────────────────────────────────
+        # Free users only see chunks from documents marked as 'free'.
+        # Pro users search all chunks regardless of access_tier.
+        tier_filter = "AND dc.access_tier = 'free'" if user_tier == "free" else ""
+
+        rag_sql = text(f"""
+            SELECT dc.chunk_text, dc.section_title, d.title AS doc_title, dc.access_tier,
                    1 - (dc.chunk_embedding <=> CAST(:vec AS vector)) AS sim
             FROM document_chunks dc
             JOIN documents d ON d.id = dc.document_id
@@ -590,12 +767,41 @@ async def teaching_assistant(request: Request, body: dict, db: AsyncSession = De
               AND dc.subject_id = :subj
               AND d.status = 'ready'
               AND 1 - (dc.chunk_embedding <=> CAST(:vec AS vector)) > 0.50
+              {tier_filter}
             ORDER BY sim DESC LIMIT 3
         """)
         rag_rows = (await db.execute(rag_sql, {"vec": vec_str, "subj": subject_id})).fetchall()
 
         if not rag_rows:
-            # No document content — block generation, tell frontend to search
+            if user_tier == "free":
+                # No free chunks found — check if pro chunks exist for this topic
+                pro_check = await db.execute(text("""
+                    SELECT COUNT(*) FROM document_chunks dc
+                    JOIN documents d ON d.id = dc.document_id
+                    WHERE dc.chunk_embedding IS NOT NULL
+                      AND dc.subject_id = :subj
+                      AND d.status = 'ready'
+                      AND dc.access_tier = 'pro'
+                      AND 1 - (dc.chunk_embedding <=> CAST(:vec AS vector)) > 0.50
+                """), {"vec": vec_str, "subj": subject_id})
+                pro_cnt = pro_check.scalar() or 0
+
+                if pro_cnt > 0:
+                    # 👻 Ghost generation: generate + cache silently in background
+                    # Free user gets subscribe popup immediately; result cached for
+                    # pro users and any free user who upgrades later.
+                    print(f"[Ghost] 👻 Triggering background cache-warm for '{question[:55]}'")
+                    asyncio.create_task(_ghost_generate_and_cache(
+                        question=question,
+                        subject_id=subject_id,
+                        subject_name=subject_name,
+                        language=language,
+                        q_hash=q_hash,
+                        vec_str=vec_str,
+                    ))
+                    return _SUBSCRIBE_RESPONSE
+
+            # Truly no content (no free OR pro chunks above threshold)
             print(f"[L5 RAG] 0 chunks found for '{question[:60]}' — blocking generation")
             return _NO_CONTENT_RESPONSE
 
@@ -605,12 +811,21 @@ async def teaching_assistant(request: Request, body: dict, db: AsyncSession = De
             for r in rag_rows
         )
         is_doc_grounded = True
-        print(f"[L5 RAG] {len(rag_rows)} chunks found → grounded generation for '{question[:60]}'")
+        
+        cache_tier = "free"
+        for r in rag_rows:
+            if r.access_tier == "pro":
+                cache_tier = "pro"
+                break
+
+        tier_label = f"[{user_tier.upper()}]" if user_tier == "free" else ""
+        print(f"[L5 RAG]{tier_label} {len(rag_rows)} chunks found → grounded generation for '{question[:55]}'")
 
     except Exception as e:
         # RAG lookup failed — still block, don't hallucinate
         print(f"[L5 RAG] lookup failed: {e} — blocking generation (no fallback)")
         return _NO_CONTENT_RESPONSE
+
 
     slides_data = await generate_slides(question, subject_name, context=rag_context)
 
@@ -647,6 +862,7 @@ async def teaching_assistant(request: Request, body: dict, db: AsyncSession = De
         pregen_status="done",
         realtime_generated=True,   # CPU real-time path
         realtime_tier=2,           # tier 2 = OpenRouter + Sarvam (CPU cloud APIs)
+        access_tier=cache_tier,
     )
     db.add(new_row)
     try:
@@ -688,6 +904,7 @@ async def teaching_assistant(request: Request, body: dict, db: AsyncSession = De
                 "totalDurationSeconds": existing.total_duration_seconds,
                 "manimVideoUrls": existing.manim_video_urls or {},
                 "imageUrls": existing.image_urls or {},
+                "access_tier": existing.access_tier,
             }
             await set_to_cache(q_hash, subject_id, result_data)
             await release_lock(q_hash, subject_id)
@@ -706,6 +923,7 @@ async def teaching_assistant(request: Request, body: dict, db: AsyncSession = De
             "slideAudioUrls": audios,
             "totalDurationSeconds": total_duration,
             "manimVideoUrls": {}, "imageUrls": {},
+            "access_tier": cache_tier,
         }
 
     result_data = {
@@ -721,6 +939,7 @@ async def teaching_assistant(request: Request, body: dict, db: AsyncSession = De
         "totalDurationSeconds": total_duration,
         "manimVideoUrls": {},   # empty for real-time; pre-gen fills this via pregen pipeline
         "imageUrls": {},
+        "access_tier": cache_tier,
     }
 
     # Release the distributed lock now that the row is committed

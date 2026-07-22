@@ -1,0 +1,2 @@
+ALTER TABLE teaching_qa_cache ADD COLUMN IF NOT EXISTS access_tier VARCHAR(20) NOT NULL DEFAULT 'pro';
+ALTER TABLE text_answer_cache ADD COLUMN IF NOT EXISTS access_tier VARCHAR(20) NOT NULL DEFAULT 'pro';

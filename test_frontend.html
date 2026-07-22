@@ -522,6 +522,272 @@
             color: #92400e;
             font-size: 14px;
         }
+
+        /* ── Text Answer Section ─────────────────────────── */
+        .section-divider {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin: 28px 0 20px;
+            color: #9ca3af;
+            font-size: 13px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: .6px;
+        }
+        .section-divider::before, .section-divider::after {
+            content: '';
+            flex: 1;
+            height: 1px;
+            background: #e5e7eb;
+        }
+
+        #ta-submitBtn {
+            width: 100%;
+            padding: 13px;
+            background: linear-gradient(135deg, #059669, #0d9488);
+            color: #fff;
+            border: none;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: 700;
+            cursor: pointer;
+            transition: opacity .2s;
+            margin-top: 4px;
+        }
+        #ta-submitBtn:hover { opacity: .9; }
+        #ta-submitBtn:disabled { opacity: .5; cursor: not-allowed; }
+
+        .ta-answer-card {
+            background: #fff;
+            border-radius: 14px;
+            box-shadow: 0 2px 16px rgba(0,0,0,.08);
+            padding: 24px;
+            margin-bottom: 20px;
+        }
+        .ta-answer-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 16px;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+        .ta-answer-header h2 {
+            font-size: 17px;
+            font-weight: 700;
+            color: #1a1a2e;
+        }
+        .ta-cache-badge {
+            font-size: 12px;
+            font-weight: 600;
+            padding: 4px 10px;
+            border-radius: 20px;
+        }
+        .ta-badge-cached { background: #dcfce7; color: #166534; }
+        .ta-badge-new    { background: #ede9fe; color: #5b21b6; }
+        .ta-badge-semi   { background: #e0f2fe; color: #0369a1; }
+
+        .ta-answer-text {
+            font-size: 15px;
+            line-height: 1.75;
+            color: #1a1a2e;
+            margin-bottom: 18px;
+            white-space: pre-wrap;
+        }
+
+        .ta-key-points {
+            background: #f0fdf4;
+            border: 1px solid #bbf7d0;
+            border-radius: 10px;
+            padding: 14px 18px;
+            margin-bottom: 16px;
+        }
+        .ta-key-points h4 {
+            font-size: 12px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: .5px;
+            color: #059669;
+            margin-bottom: 8px;
+        }
+        .ta-key-points li {
+            font-size: 14px;
+            color: #1a1a2e;
+            margin-left: 18px;
+            margin-bottom: 4px;
+            line-height: 1.5;
+        }
+
+        .ta-sources {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            margin-bottom: 18px;
+        }
+        .ta-source-pill {
+            font-size: 11px;
+            padding: 3px 10px;
+            border-radius: 20px;
+            background: #ede9fe;
+            color: #5b21b6;
+            font-weight: 500;
+        }
+
+        .ta-slide-preview-btn {
+            width: 100%;
+            padding: 12px;
+            background: linear-gradient(135deg, #6366f1, #8b5cf6);
+            color: #fff;
+            border: none;
+            border-radius: 10px;
+            font-size: 14px;
+            font-weight: 700;
+            cursor: pointer;
+            margin-bottom: 16px;
+            transition: opacity .2s;
+        }
+        .ta-slide-preview-btn:hover { opacity: .9; }
+
+        .ta-slide-preview-area {
+            border: 1.5px solid #e5e7eb;
+            border-radius: 10px;
+            padding: 16px;
+            margin-bottom: 16px;
+            display: none;
+        }
+        .ta-slide-preview-area h4 {
+            font-size: 13px;
+            font-weight: 700;
+            color: #6366f1;
+            margin-bottom: 12px;
+        }
+        .ta-mini-slide {
+            background: #f8f9ff;
+            border-radius: 8px;
+            padding: 12px;
+            margin-bottom: 10px;
+            border: 1px solid #e5e7eb;
+        }
+        .ta-mini-slide h5 { font-size: 13px; font-weight: 700; margin-bottom: 6px; color: #1a1a2e; }
+        .ta-mini-slide li { font-size: 12px; color: #4b5563; margin-left: 16px; line-height: 1.5; }
+        .ta-mini-slide audio { width: 100%; margin-top: 8px; height: 32px; }
+
+        .ta-suggestions {
+            margin-top: 8px;
+        }
+        .ta-suggestions h4 {
+            font-size: 12px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: .5px;
+            color: #6b7280;
+            margin-bottom: 10px;
+        }
+        .ta-sugg-chips {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+        .ta-sugg-chip {
+            display: inline-block;
+            padding: 7px 14px;
+            background: #f0f0ff;
+            border: 1.5px solid #c7d2fe;
+            border-radius: 20px;
+            font-size: 13px;
+            color: #4338ca;
+            cursor: pointer;
+            transition: background .15s, border-color .15s;
+            max-width: 340px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .ta-sugg-chip:hover { background: #e0e7ff; border-color: #6366f1; }
+        .ta-sugg-chip .sugg-slides-badge {
+            font-size: 10px;
+            background: #6366f1;
+            color: #fff;
+            padding: 1px 5px;
+            border-radius: 10px;
+            margin-left: 4px;
+        }
+
+        /* ── Subscribe Modal ──────────────────────────────── */
+        .subscribe-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.72);
+            backdrop-filter: blur(8px);
+            -webkit-backdrop-filter: blur(8px);
+            z-index: 9999;
+            align-items: center;
+            justify-content: center;
+        }
+        .subscribe-overlay.active { display: flex; }
+
+        .subscribe-modal {
+            background: linear-gradient(145deg, #1e1b4b 0%, #312e81 60%, #1e1b4b 100%);
+            border: 1.5px solid #4f46e5;
+            border-radius: 24px;
+            padding: 44px 40px 36px;
+            max-width: 440px;
+            width: 90%;
+            text-align: center;
+            color: #fff;
+            box-shadow: 0 24px 80px rgba(99, 102, 241, 0.35);
+            animation: subscribeIn 0.32s cubic-bezier(0.34,1.56,0.64,1);
+        }
+        @keyframes subscribeIn {
+            from { transform: scale(0.78) translateY(20px); opacity: 0; }
+            to   { transform: scale(1)    translateY(0);    opacity: 1; }
+        }
+        .subscribe-icon { font-size: 3.2rem; margin-bottom: 14px; }
+        .subscribe-modal h2 {
+            font-size: 1.7rem;
+            font-weight: 800;
+            margin-bottom: 10px;
+            background: linear-gradient(135deg, #a5b4fc, #e0e7ff);
+            -webkit-background-clip: text;
+            background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        .subscribe-modal p {
+            color: #c7d2fe;
+            margin-bottom: 28px;
+            line-height: 1.65;
+            font-size: 0.95rem;
+        }
+        .subscribe-cta {
+            background: linear-gradient(135deg, #6366f1, #8b5cf6);
+            color: #fff;
+            border: none;
+            padding: 14px 0;
+            border-radius: 14px;
+            font-size: 1rem;
+            font-weight: 700;
+            cursor: pointer;
+            width: 100%;
+            margin-bottom: 12px;
+            letter-spacing: 0.02em;
+            transition: transform 0.18s, box-shadow 0.18s;
+            box-shadow: 0 4px 20px rgba(99,102,241,0.45);
+        }
+        .subscribe-cta:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 28px rgba(99,102,241,0.6);
+        }
+        .subscribe-dismiss {
+            background: transparent;
+            color: #6b7280;
+            border: none;
+            cursor: pointer;
+            font-size: 0.88rem;
+            transition: color 0.15s;
+        }
+        .subscribe-dismiss:hover { color: #9ca3af; }
     </style>
 </head>
 
@@ -540,6 +806,13 @@
                     <label for="subject">Subject</label>
                     <select id="subject">
                         <option value="">— Select Subject —</option>
+                    </select>
+                </div>
+                <div>
+                    <label for="userTier">User Tier</label>
+                    <select id="userTier">
+                        <option value="pro">Pro User (Full Access)</option>
+                        <option value="free">Free User (Limited)</option>
                     </select>
                 </div>
                 <div>
@@ -573,10 +846,46 @@
         <!-- Slide output -->
         <div id="result"></div>
 
-    </div>
+        <!-- ══════════════════════════════════════════════════ -->
+        <!-- QUICK TEXT ANSWER SECTION                         -->
+        <!-- ══════════════════════════════════════════════════ -->
+        <div class="section-divider">💬 Quick Text Answer (Free — Local AI)</div>
+
+        <div class="card">
+            <div class="form-row">
+                <div>
+                    <label for="ta-subject">Subject</label>
+                    <select id="ta-subject">
+                        <option value="">— Select Subject —</option>
+                    </select>
+                </div>
+                <div>
+                    <label for="ta-userTier">User Tier</label>
+                    <select id="ta-userTier">
+                        <option value="pro">Pro User (Full Access)</option>
+                        <option value="free">Free User (Limited)</option>
+                    </select>
+                </div>
+                <div>
+                    <label for="ta-question">Your Question</label>
+                    <input type="text" id="ta-question" placeholder="Ask anything from your course material…" autocomplete="off">
+                </div>
+            </div>
+            <button id="ta-submitBtn" onclick="askTextAnswer()">💬 Get Text Answer</button>
+            <div id="ta-loading" style="display:none; margin-top:12px; color:#6b7280; font-size:14px;">
+                <span class="spinner" style="display:inline-block; margin-right:6px;"></span>
+                Getting answer from local AI…
+            </div>
+        </div>
+
+        <!-- Text answer output -->
+        <div id="ta-result"></div>
+
+    </div><!-- /container -->
 
     <script>
         const API_BASE = window.location.origin;
+        const API_KEY  = 'pramod2003@@';
 
         // ─────────────────────────────────────────────────────────────────
         // Subject name lookup map  { uuid → name }
@@ -587,14 +896,19 @@
             try {
                 const res = await fetch(`${API_BASE}/subjects`);
                 const data = await res.json();
-                const sel = document.getElementById('subject');
-                (data.subjects || []).forEach(s => {
-                    subjectNames[s.subject_id] = s.name;
-                    const opt = document.createElement('option');
-                    opt.value = s.subject_id;   // UUID used by API
-                    opt.textContent = s.name;          // human name shown
-                    sel.appendChild(opt);
-                });
+
+                // Populate BOTH subject selects
+                [document.getElementById('subject'), document.getElementById('ta-subject')]
+                    .forEach(sel => {
+                        if (!sel) return;
+                        (data.subjects || []).forEach(s => {
+                            subjectNames[s.subject_id] = s.name;
+                            const opt = document.createElement('option');
+                            opt.value = s.subject_id;
+                            opt.textContent = s.name;
+                            sel.appendChild(opt);
+                        });
+                    });
             } catch (e) {
                 console.warn('Could not load subjects:', e);
             }
@@ -796,6 +1110,7 @@
             const question = qInput.value.trim();
             const subjectId = document.getElementById('subject').value.trim();
             const subjectName = subjectNames[subjectId] || subjectId;
+            const userTier = document.getElementById('userTier') ? document.getElementById('userTier').value : 'pro';
 
             if (!question) {
                 qInput.focus();
@@ -826,7 +1141,8 @@
                         subjectId: subjectId,
                         subjectName: subjectName,
                         mode: 'full',
-                        language: 'en-US'
+                        language: 'en-US',
+                        userTier: userTier
                     })
                 });
 
@@ -855,9 +1171,14 @@
                 return;
             }
             if (data.blocked) {
-                resultDiv.innerHTML = `<div class="blocked-box">
+                if (data.reason === 'subscription_required') {
+                    // Show premium subscribe popup instead of inline error
+                    showSubscribeModal(data.message);
+                } else {
+                    resultDiv.innerHTML = `<div class="blocked-box">
             <strong>⚠️ Off-topic:</strong> ${escHtml(data.message)}
         </div>`;
+                }
                 return;
             }
 
@@ -881,8 +1202,9 @@
                 const manimData = manimUrls[String(i)];
                 const manimUrl = manimData?.url || null;
                 const imgUrl = slide.infographicUrl || imageUrls[String(i)]?.url || '';
-                const audioUrls = data.slideAudioUrls || [];
-                const audioUrl = slide.audioUrl || audioUrls[i] || '';
+                const audioUrlsList = (data.slideAudioUrls?.urls || data.slideAudioUrls || []);
+                const audioObj = audioUrlsList[i] || {};
+                const audioUrl = slide.audioUrl || audioObj.audioUrl || '';
 
                 let mediaHtml = '';
 
@@ -1005,6 +1327,207 @@
             // Preload audio so it's ready when video starts
             aud.load();
         }
+
+        // ─────────────────────────────────────────────────────────────────
+        // TEXT ANSWER — askTextAnswer() + renderTextAnswer()
+        // ─────────────────────────────────────────────────────────────────
+        async function askTextAnswer(questionOverride) {
+            const question   = questionOverride || document.getElementById('ta-question').value.trim();
+            const subjectId  = document.getElementById('ta-subject').value.trim();
+            const subjectName = subjectNames[subjectId] || subjectId;
+            const userTier   = document.getElementById('ta-userTier') ? document.getElementById('ta-userTier').value : 'pro';
+
+            if (!question) {
+                const inp = document.getElementById('ta-question');
+                inp.focus();
+                inp.style.borderColor = '#ef4444';
+                setTimeout(() => inp.style.borderColor = '', 1200);
+                return;
+            }
+            if (!subjectId) {
+                const sel = document.getElementById('ta-subject');
+                sel.style.borderColor = '#ef4444';
+                setTimeout(() => sel.style.borderColor = '', 1400);
+                return;
+            }
+
+            // If a question was passed (suggestion click), update the input field
+            if (questionOverride) {
+                document.getElementById('ta-question').value = questionOverride;
+            }
+
+            const btn = document.getElementById('ta-submitBtn');
+            btn.disabled = true;
+            document.getElementById('ta-loading').style.display = 'block';
+            document.getElementById('ta-result').innerHTML = '';
+
+            try {
+                const res = await fetch(`${API_BASE}/ai-text-answer`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-API-Key': API_KEY,
+                    },
+                    body: JSON.stringify({ question, subjectId, subjectName, userTier })
+                });
+
+                const data = await res.json();
+
+                if (data.blocked && data.reason === 'subscription_required') {
+                    showSubscribeModal(data.message);
+                    return;
+                }
+                if (res.status === 404 && data.no_content) {
+                    document.getElementById('ta-result').innerHTML =
+                        `<div class="blocked-box">📚 No relevant course material found for this question. Try asking something covered in your uploaded documents.</div>`;
+                    return;
+                }
+                if (!res.ok) {
+                    document.getElementById('ta-result').innerHTML =
+                        `<div class="error-box"><strong>Error ${res.status}:</strong> ${escHtml(data.error || data.detail || 'Unknown error')}</div>`;
+                    return;
+                }
+
+                renderTextAnswer(data);
+
+            } catch (err) {
+                document.getElementById('ta-result').innerHTML =
+                    `<div class="error-box"><strong>Network Error:</strong> ${escHtml(err.message)}</div>`;
+            } finally {
+                btn.disabled = false;
+                document.getElementById('ta-loading').style.display = 'none';
+            }
+        }
+
+        function renderTextAnswer(data) {
+            const resultDiv = document.getElementById('ta-result');
+
+            // Cache badge
+            const layer = data.cache_layer || '';
+            let badgeClass = 'ta-badge-new', badgeText = '🆕 Freshly Generated';
+            if (layer.startsWith('L1') || layer.startsWith('L2')) {
+                badgeClass = 'ta-badge-cached'; badgeText = '⚡ From Cache';
+            } else if (layer.startsWith('L3')) {
+                badgeClass = 'ta-badge-semi'; badgeText = '🔗 Similar Match';
+            }
+
+            // Sources pills
+            const sources = data.sources || [];
+            const sourceHtml = sources.map(s =>
+                `<span class="ta-source-pill">📄 ${escHtml(s.doc_title || '')}${s.section_title ? ' › ' + escHtml(s.section_title) : ''}</span>`
+            ).join('');
+
+            // Key points
+            const keyPoints = data.key_points || [];
+            const kpHtml = keyPoints.length ? `
+                <div class="ta-key-points">
+                    <h4>📌 Key Points</h4>
+                    <ul>${keyPoints.map(p => `<li>${escHtml(p)}</li>`).join('')}</ul>
+                </div>` : '';
+
+            // Slide preview button (only shown if slide data exists)
+            const preview = data.slide_preview || {};
+            const previewBtnHtml = preview.found
+                ? `<button class="ta-slide-preview-btn" onclick="toggleSlidePreview()">🎬 View Full Presentation (${(preview.presentation_slides||[]).length} slides) — "${escHtml((preview.matched_question||'').slice(0,60))}…"</button>
+                   <div class="ta-slide-preview-area" id="ta-preview-area">
+                       <h4>📊 Related Presentation</h4>
+                       ${(preview.presentation_slides||[]).slice(0,3).map((s,i) => {
+                           const audioUrls = (preview.slide_audio_urls||{}).urls || [];
+                           const audioObj  = audioUrls[i] || {};
+                           const audioUrl  = audioObj.audioUrl || '';
+                           const imageUrls = preview.image_urls || {};
+                           const imgObj    = imageUrls[String(i)] || {};
+                           const imgUrl    = imgObj.url || s.infographicUrl || '';
+                           const bullets   = (s.bullet_points||[]).map(b=>`<li>${escHtml(b)}</li>`).join('');
+                           return `<div class="ta-mini-slide">
+                               <h5>Slide ${i+1}: ${escHtml(s.title||'')}</h5>
+                               ${imgUrl ? `<img src="${escHtml(imgUrl)}" style="width:100%; border-radius:6px; margin:8px 0;" alt="Slide Image">` : ''}
+                               ${bullets?`<ul>${bullets}</ul>`:''}
+                               ${audioUrl?`<audio controls src="${escHtml(audioUrl)}"></audio>`:''}
+                           </div>`;
+                       }).join('')}
+                       ${(preview.presentation_slides||[]).length > 3 ? `<p style="font-size:12px;color:#6b7280;margin-top:8px;">+ ${(preview.presentation_slides||[]).length-3} more slides in full presentation</p>` : ''}
+                   </div>`
+                : '';
+
+            // Suggestion chips (only questions with full slide data)
+            const suggestions = data.suggestions || [];
+            const suggestHtml = suggestions.length ? `
+                <div class="ta-suggestions">
+                    <h4>🔗 Related Questions (click to explore)</h4>
+                    <div class="ta-sugg-chips">
+                        ${suggestions.map(s => `
+                            <span class="ta-sugg-chip" onclick='askTextAnswer(${JSON.stringify(s.question).replace(/'/g, "&#39;")})' title="${escHtml(s.question)}">
+                                ${escHtml(s.question.length > 55 ? s.question.slice(0,52)+'…' : s.question)}
+                                ${s.has_slides ? '<span class="sugg-slides-badge">📊 slides</span>' : ''}
+                            </span>`).join('')}
+                    </div>
+                </div>` : '';
+
+            resultDiv.innerHTML = `
+                <div class="ta-answer-card">
+                    <div class="ta-answer-header">
+                        <h2>💬 Text Answer</h2>
+                        <span class="ta-cache-badge ${badgeClass}">${badgeText}</span>
+                    </div>
+                    <div class="ta-answer-text">${escHtml(data.answer || '')}</div>
+                    ${kpHtml}
+                    ${sourceHtml ? `<div class="ta-sources">${sourceHtml}</div>` : ''}
+                    ${previewBtnHtml}
+                    ${suggestHtml}
+                </div>`;
+        }
+
+        function toggleSlidePreview() {
+            const area = document.getElementById('ta-preview-area');
+            if (!area) return;
+            const shown = area.style.display === 'block';
+            area.style.display = shown ? 'none' : 'block';
+        }
+
+        /* ── Subscribe modal helpers ──────────────────────── */
+        function showSubscribeModal(message) {
+            if (message) {
+                document.getElementById('subscribeMsg').textContent = message;
+            }
+            document.getElementById('subscribeOverlay').classList.add('active');
+        }
+        function closeSubscribeModal() {
+            document.getElementById('subscribeOverlay').classList.remove('active');
+        }
+        function handleSubscribeClick() {
+            // Replace with your actual payment / subscription page URL
+            window.open('https://your-subscription-page.com', '_blank');
+            closeSubscribeModal();
+        }
+        // Close on backdrop click
+        document.getElementById('subscribeOverlay').addEventListener('click', function(e) {
+            if (e.target === this) closeSubscribeModal();
+        });
+    </script>
+
+    <!-- ── Subscribe Modal ──────────────────────────────── -->
+    <div class="subscribe-overlay" id="subscribeOverlay">
+        <div class="subscribe-modal">
+            <div class="subscribe-icon">🔒</div>
+            <h2>Pro Content</h2>
+            <p id="subscribeMsg">
+                This topic is part of the Pro course.
+                Upgrade your plan to unlock AI-generated presentations,
+                audio explanations, infographics, and much more.
+            </p>
+            <button class="subscribe-cta" onclick="handleSubscribeClick()">
+                🚀 Upgrade to Pro
+            </button>
+            <br>
+            <button class="subscribe-dismiss" onclick="closeSubscribeModal()">
+                Maybe Later
+            </button>
+        </div>
+    </div>
+
+</body>
+</html>
     </script>
 </body>
 

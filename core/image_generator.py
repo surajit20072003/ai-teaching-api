@@ -33,7 +33,7 @@ async def generate_one_image(slide: dict, cache_id: str, idx: int, subject_id: s
         "X-Title": "AI Teaching API",
     }
     payload = {
-        "model": "black-forest-labs/flux-schnell",
+        "model": "google/gemini-2.5-flash-image",
         "messages": [{"role": "user", "content": prompt}],
     }
 
@@ -52,11 +52,12 @@ async def generate_one_image(slide: dict, cache_id: str, idx: int, subject_id: s
             message   = choices[0].get("message", {})
             image_b64 = None
 
-            # 1. Check 'images' field
+            # 1. Check 'images' field (Gemini Flash Image returns images here)
             images = message.get("images") or []
             if images:
                 img = images[0]
                 if isinstance(img, dict):
+                    # Gemini: {"type": "image_url", "image_url": {"url": "data:image/png;base64,..."}}
                     if img.get("type") == "image_url":
                         image_b64 = img.get("image_url", {}).get("url", "")
                     else:

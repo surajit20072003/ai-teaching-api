@@ -34,8 +34,9 @@ async def llm_pick_best_match(user_question: str, candidates: list[dict]) -> str
         f"Reply with ONLY a digit 1-{n} or the word NEW:"
     )
     try:
-        async with httpx.AsyncClient(timeout=10) as c:
-            r = await c.post(
+        client = httpx.AsyncClient(timeout=10)
+        try:
+            r = await client.post(
                 "https://openrouter.ai/api/v1/chat/completions",
                 headers={"Authorization": f"Bearer {os.getenv('OPENROUTER_API_KEY')}"},
                 json={"model": JUDGE_MODEL,
@@ -43,6 +44,8 @@ async def llm_pick_best_match(user_question: str, candidates: list[dict]) -> str
                       "max_tokens": 5, "temperature": 0},
             )
             r.raise_for_status()
+        finally:
+            await client.aclose()
         raw    = r.json()["choices"][0]["message"]["content"].strip().upper()
         valid  = {str(i+1) for i in range(n)} | {"NEW"}
         result = raw if raw in valid else "NEW"

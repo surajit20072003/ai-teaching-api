@@ -133,6 +133,9 @@ async def read_slide_cache(subject_id: str, question_hash: str) -> Optional[dict
     """
     L2 cache: read slide JSON from local disk.
     Returns None if file doesn't exist (cache miss).
+    SAFETY: If file exists but has no access_tier, it's a stale pre-tier file
+    (from GPU pre-generation before tier system existed). Delete it and return
+    None — forcing fallback to L3 Postgres which has the correct access_tier.
     ~1ms read time.
     """
     path = get_slide_cache_path(subject_id, question_hash)
@@ -141,7 +144,16 @@ async def read_slide_cache(subject_id: str, question_hash: str) -> Optional[dict
             return None
         async with aiofiles.open(path, "r", encoding="utf-8") as f:
             content = await f.read()
-        return json.loads(content)
+        data = json.loads(content)
+        if "access_tier" not in data:
+            # Stale file — delete it so it gets re-written correctly from L3
+            logger.warning(f"[local_storage] Stale cache file (no access_tier) — deleting: {question_hash}")
+            try:
+                await aiofiles.os.remove(path)
+            except Exception:
+                pass
+            return None
+        return data
     except Exception as e:
         logger.warning(f"[local_storage] read_slide_cache failed for {question_hash}: {e}")
         return None
@@ -150,7 +162,12 @@ async def write_slide_cache(subject_id: str, question_hash: str, data: dict) -> 
     """
     Write slide JSON to local disk. Creates parent dirs if needed.
     Returns True on success.
+    SAFETY: Refuses to write if access_tier is missing — prevents tier-less
+    cache files that could leak pro content to free users on L2 reads.
     """
+    if "access_tier" not in data:
+        logger.warning(f"[local_storage] write_slide_cache BLOCKED for {question_hash} — missing access_tier")
+        return False
     path = get_slide_cache_path(subject_id, question_hash)
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)

@@ -557,18 +557,24 @@ async def _pregen_text_only(
 
     _log(f"[Pregen-A] Ollama → generating slides for: {question[:80]}")
 
-    # Fetch RAG context if doc-linked
+    # Fetch RAG context + document access_tier if doc-linked
     context = ""
+    doc_tier = row.get("access_tier", "pro")  # default to existing or pro
     if doc_id:
         r = await db.execute(
             text("""
-                SELECT chunk_text FROM document_chunks
-                WHERE document_id = CAST(:doc_id AS uuid)
-                ORDER BY chunk_index LIMIT 8
+                SELECT dc.chunk_text, d.access_tier
+                FROM document_chunks dc
+                JOIN documents d ON d.id = dc.document_id
+                WHERE dc.document_id = CAST(:doc_id AS uuid)
+                ORDER BY dc.chunk_index LIMIT 8
             """),
             {"doc_id": str(doc_id)},
         )
-        context = "\n\n".join(r.scalars().all())
+        rows_ctx = r.fetchall()
+        context = "\n\n".join(r2[0] for r2 in rows_ctx)
+        if rows_ctx and rows_ctx[0][1]:
+            doc_tier = rows_ctx[0][1]
 
     slide_data = await generate_slides(
         question  = question,
@@ -580,19 +586,21 @@ async def _pregen_text_only(
     if not slides:
         raise ValueError("Ollama returned 0 slides")
 
-    _log(f"[Pregen-A] ✓ {len(slides)} slides — saving to DB")
+    _log(f"[Pregen-A] ✓ {len(slides)} slides (doc_tier={doc_tier}) — saving to DB")
     await db.execute(
         text("""
             UPDATE teaching_qa_cache
-            SET presentation_slides = CAST(:slides AS jsonb)
+            SET presentation_slides = CAST(:slides AS jsonb),
+                access_tier         = :tier
             WHERE id = CAST(:id AS uuid)
         """),
-        {"slides": json.dumps(slides), "id": cache_id},
+        {"slides": json.dumps(slides), "tier": doc_tier, "id": cache_id},
     )
     await db.commit()
 
     row = dict(row)
     row["presentation_slides"] = slides
+    row["access_tier"]         = doc_tier
     return row
 
 
@@ -814,6 +822,7 @@ async def _save_row_result(
     total_duration:   float,
     manim_video_urls: dict,
     image_urls_map:   dict,
+    access_tier:      str = "pro",   # ← NEW: default safe
 ) -> None:
     """
     Save final results to DB and mark row as 'done'.
@@ -830,7 +839,7 @@ async def _save_row_result(
     subject  = row.get("subject_id") or "General"  # always UUID (never display name)
     q_hash   = row.get("question_hash") or ""
 
-    # ── Step 1: Core save — slides, audio URLs, status='done' ─────────────────
+    # ── Step 1: Core save — slides, audio URLs, access_tier, status='done' ──────
     # This MUST succeed before anything else.  No embedding here.
     await db.execute(
         text("""
@@ -840,6 +849,7 @@ async def _save_row_result(
                 total_duration_seconds = :dur,
                 manim_video_urls       = CAST(:manim AS jsonb),
                 image_urls             = CAST(:imgs  AS jsonb),
+                access_tier            = :tier,
                 pregen_status          = 'done',
                 pregen_completed_at    = NOW()
             WHERE id = CAST(:id AS uuid)
@@ -850,11 +860,12 @@ async def _save_row_result(
             "dur":    total_duration,
             "manim":  json.dumps(manim_video_urls),
             "imgs":   json.dumps(image_urls_map),
+            "tier":   access_tier,
             "id":     cache_id,
         },
     )
     await db.commit()
-    _log(f"[Pregen] ✓ Saved: {cache_id[:8]} — pregen_status=done, "
+    _log(f"[Pregen] ✓ Saved: {cache_id[:8]} — pregen_status=done, access_tier={access_tier}, "
          f"{len(slides)} slides, {round(total_duration)}s audio")
 
     # ── Step 2: Embedding — best-effort, never blocks save ────────────────────
@@ -884,6 +895,9 @@ async def _save_row_result(
                 "totalDurationSeconds": total_duration,
                 "manimVideoUrls":       manim_video_urls,
                 "imageUrls":            image_urls_map,
+                "access_tier":          access_tier,   # ← FIXED
+                "cached":               True,
+                "cache_layer":          "L2_local_disk",
             })
         except Exception as e:
             _log(f"[Pregen] local cache write failed (non-fatal): {e}")
@@ -910,19 +924,26 @@ async def _pregen_one(row: Dict[str, Any], db: AsyncSession) -> None:
         _state.current_step = "ollama"
         _log(f"[Pregen] Step 1: Ollama → generating slides...")
         try:
-            # Fetch RAG context if doc-linked
-            context = ""
+            # Fetch RAG context + document access_tier
+            context     = ""
+            doc_tier    = "pro"   # safe default
             if doc_id:
                 r = await db.execute(
                     text("""
-                        SELECT chunk_text FROM document_chunks
-                        WHERE document_id = CAST(:doc_id AS uuid)
-                        ORDER BY chunk_index LIMIT 8  -- 8 chunks ≈ full chapter context for deep narrations
+                        SELECT dc.chunk_text, d.access_tier
+                        FROM document_chunks dc
+                        JOIN documents d ON d.id = dc.document_id
+                        WHERE dc.document_id = CAST(:doc_id AS uuid)
+                        ORDER BY dc.chunk_index LIMIT 8
                     """),
                     {"doc_id": str(doc_id)},
                 )
-                chunks = r.scalars().all()
-                context = "\n\n".join(chunks)
+                rows_ctx = r.fetchall()
+                chunks   = [r2[0] for r2 in rows_ctx]
+                context  = "\n\n".join(chunks)
+                if rows_ctx:
+                    doc_tier = rows_ctx[0][1] or "pro"   # access_tier from document
+                _log(f"[Pregen] doc_tier={doc_tier} for doc_id={str(doc_id)[:8]}")
 
             slide_data = await generate_slides(
                 question  = question,
@@ -1064,7 +1085,7 @@ async def _pregen_one(row: Dict[str, Any], db: AsyncSession) -> None:
     _state.current_step = "saving"
     _log(f"[Pregen] Step 3: Saving results to DB...")
 
-    # Step 3a: Core save — slides/audio/status='done' (always runs)
+    # Step 3a: Core save — slides/audio/access_tier/status='done' (always runs)
     await db.execute(
         text("""
             UPDATE teaching_qa_cache
@@ -1073,6 +1094,7 @@ async def _pregen_one(row: Dict[str, Any], db: AsyncSession) -> None:
                 total_duration_seconds = :dur,
                 manim_video_urls       = CAST(:manim AS jsonb),
                 image_urls             = CAST(:imgs  AS jsonb),
+                access_tier            = :tier,
                 pregen_status          = 'done',
                 pregen_completed_at    = NOW()
             WHERE id = CAST(:id AS uuid)
@@ -1083,11 +1105,12 @@ async def _pregen_one(row: Dict[str, Any], db: AsyncSession) -> None:
             "dur":    total_duration,
             "manim":  json.dumps(manim_video_urls),
             "imgs":   json.dumps(image_urls_map),
+            "tier":   doc_tier,
             "id":     cache_id,
         },
     )
     await db.commit()
-    _log(f"[Pregen] ✓ Done: {question[:60]} — {len(slides)} slides, {round(total_duration)}s audio, {len(manim_video_urls)} manim")
+    _log(f"[Pregen] ✓ Done: {question[:60]} — access_tier={doc_tier}, {len(slides)} slides, {round(total_duration)}s audio, {len(manim_video_urls)} manim")
 
     # Step 3b: Embedding — best-effort, never blocks status='done'
     try:
@@ -1110,16 +1133,19 @@ async def _pregen_one(row: Dict[str, Any], db: AsyncSession) -> None:
     q_hash = row.get("question_hash") or ""
     if q_hash and subject:
         slide_cache_data = {
-            "cache_id":            cache_id,
-            "presentationSlides":  slides,
-            "slideAudioUrls":      {"language": language, "urls": audio_url_list},
+            "cache_id":             cache_id,
+            "presentationSlides":   slides,
+            "slideAudioUrls":       {"language": language, "urls": audio_url_list},
             "totalDurationSeconds": total_duration,
-            "manimVideoUrls":      manim_video_urls,
-            "imageUrls":           image_urls_map,
+            "manimVideoUrls":       manim_video_urls,
+            "imageUrls":            image_urls_map,
+            "access_tier":          doc_tier,   # ← FIXED
+            "cached":               True,
+            "cache_layer":          "L2_local_disk",
         }
         try:
             await write_slide_cache(subject, q_hash, slide_cache_data)
-            _log(f"[Pregen] ✓ Local slide cache written: {subject}/{q_hash}")
+            _log(f"[Pregen] ✓ Local slide cache written (tier={doc_tier}): {subject}/{q_hash}")
         except Exception as e:
             _log(f"[Pregen] Local slide cache write failed (non-fatal): {e}")
 
@@ -1430,13 +1456,14 @@ async def run_pregen_batch(
             try:
                 async with db_factory() as db:
                     await _save_row_result(
-                        db           = db,
-                        row          = row_dict,
-                        slides       = enriched_slides,
+                        db             = db,
+                        row            = row_dict,
+                        slides         = enriched_slides,
                         audio_url_list = audio_url_list,
                         total_duration = total_duration,
                         manim_video_urls = manim_video_urls,
                         image_urls_map   = image_urls_map,
+                        access_tier      = row_dict.get("access_tier", "pro"),  # ← FIXED
                     )
                 # Link back to questions table
                 async with db_factory() as db:
@@ -1454,6 +1481,43 @@ async def run_pregen_batch(
                          "sid": subject_id},
                     )
                     await db.commit()
+
+                # ── FIX: Invalidate stale L1 Redis + overwrite L2 disk cache ──
+                # The pregen pipeline writes an empty Phase-A-only cache file
+                # (no audio/images) to disk at Phase A time. Now that Phase B/C
+                # is complete, we MUST overwrite both caches with the final data
+                # so students get audio and images immediately, not stale slides.
+                try:
+                    q_hash = row_dict.get("question_hash", "")
+                    access_tier = row_dict.get("access_tier", "pro")
+                    if q_hash:
+                        # Build the completed payload (same shape as main.py L3 response)
+                        audio_urls_for_cache = [
+                            {"slideIndex": entry["slideIndex"],
+                             "audioUrl":   entry["audioUrl"],
+                             "duration":   entry.get("duration", 0)}
+                            for entry in audio_url_list
+                            if isinstance(entry, dict) and entry.get("audioUrl")
+                        ]
+                        completed_data = {
+                            "cached":                True,
+                            "cache_layer":           "L2_local_disk",
+                            "cache_id":              cache_id,
+                            "presentationSlides":    enriched_slides,
+                            "latexFormulas":         row_dict.get("latex_formulas"),
+                            "slideAudioUrls":        audio_urls_for_cache,
+                            "totalDurationSeconds":  total_duration,
+                            "manimVideoUrls":        manim_video_urls or {},
+                            "imageUrls":             image_urls_map or {},
+                            "access_tier":           access_tier,
+                        }
+                        # Overwrite L2 disk cache (atomic write)
+                        await write_slide_cache(subject_id, q_hash, completed_data)
+                        # Invalidate L1 Redis so next request re-reads from L2/L3
+                        await delete_from_cache(q_hash, subject_id)
+                        _log(f"[Pregen] ✓ Cache refreshed: L1 invalidated + L2 overwritten ({q_hash[:8]})")
+                except Exception as cache_err:
+                    _log(f"[Pregen] Cache refresh failed (non-fatal): {cache_err}")
 
                 _state.done += 1
                 _log(f"[Pregen] ✓ Done: {cache_id[:8]} — "
@@ -1737,13 +1801,37 @@ async def retry_media_for_rows(subject_id: str, db_factory) -> None:
                         manim_video_urls = manim_video_urls,
                         image_urls_map   = image_urls_map,
                     )
-                # Invalidate Redis L1 so fresh data is served next time
+
+                # ── FIX: Overwrite L2 disk cache + invalidate L1 Redis ──
+                # Same fix as main batch — retry also completes media so
+                # the stale Phase-A-only disk file must be overwritten.
                 q_hash = row_dict.get("question_hash") or ""
                 if q_hash:
                     try:
+                        audio_urls_for_cache = [
+                            {"slideIndex": entry["slideIndex"],
+                             "audioUrl":   entry["audioUrl"],
+                             "duration":   entry.get("duration", 0)}
+                            for entry in audio_url_list
+                            if isinstance(entry, dict) and entry.get("audioUrl")
+                        ]
+                        completed_data = {
+                            "cached":               True,
+                            "cache_layer":          "L2_local_disk",
+                            "cache_id":             cache_id,
+                            "presentationSlides":   enriched_slides,
+                            "latexFormulas":        row_dict.get("latex_formulas"),
+                            "slideAudioUrls":       audio_urls_for_cache,
+                            "totalDurationSeconds": total_duration,
+                            "manimVideoUrls":       manim_video_urls or {},
+                            "imageUrls":            image_urls_map or {},
+                            "access_tier":          row_dict.get("access_tier", "pro"),
+                        }
+                        await write_slide_cache(subject_id, q_hash, completed_data)
                         await delete_from_cache(q_hash, subject_id)
-                    except Exception as e:
-                        _log(f"[Retry] Redis invalidate failed (non-fatal): {e}")
+                        _log(f"[Retry] ✓ Cache refreshed: L1 invalidated + L2 overwritten ({q_hash[:8]})")
+                    except Exception as ce:
+                        _log(f"[Retry] Cache refresh failed (non-fatal): {ce}")
 
                 _retry_state.done += 1
                 slides_with_img = sum(
