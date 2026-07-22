@@ -68,9 +68,10 @@ ACCESS_TIER = "free"
 SUBJECT_ALIASES = {
     "social":       "Social Science",
     "science":      "Science",
-    "math":         "Mathematics",
-    "maths":        "Mathematics",
-    "mathematics":  "Mathematics",
+    "math":         "Maths",
+    "maths":        "Maths",
+    "mathematics":  "Maths",
+    "math10":       "Mathematics - Class 10",
 }
 
 # ── Graceful stop flag ──────────────────────────────────────────────────────────
@@ -97,7 +98,8 @@ async def _get_subjects_and_chapters(db) -> List[Dict[str, Any]]:
     subject_map = {r.name: r.subject_id for r in rows}
 
     targets = []
-    for name in ["Social Science", "Science", "Mathematics"]:
+    # Try all known subject name variations in the DB
+    for name in ["Social Science", "Science", "Maths", "Mathematics - Class 10"]:
         sid = subject_map.get(name)
         if not sid:
             log.warning(f"Subject '{name}' not found in DB — skipping")
@@ -350,20 +352,24 @@ async def main(args: argparse.Namespace) -> None:
     # ═══════════════════════════════════════════════════════════
     log.info("\n" + "=" * 60)
     log.info("  PHASE A -- Text Generation (Ollama)")
+    log.info("  Generating slides for each question via Ollama LLM")
+    log.info("  Skips questions that already have slides in DB")
     log.info("=" * 60)
 
+    log.info("[Phase A] Step 1/3: Loading Ollama text model into GPU VRAM...")
     try:
         ready = await prepare_for_text_generation()
-        log.info(f"[Phase A] Ollama {'ready' if ready else 'not confirmed ready — proceeding anyway'}")
+        log.info(f"[Phase A] Ollama model {'✓ loaded and ready' if ready else '⚠ not confirmed — will try per-question'}")
     except Exception as e:
         log.warning(f"[Phase A] Ollama warmup failed (will try per-row): {e}")
 
     phase_a_done: List[Dict[str, Any]] = []
     phase_a_failed: List[str] = []
+    phase_a_start = time.time()
 
     for i, row in enumerate(all_rows, 1):
         if _stop_requested:
-            log.warning("[Phase A] Stop requested")
+            log.warning("[Phase A] Stop requested — halting after this point")
             break
 
         cache_id     = str(row["id"])
@@ -371,56 +377,81 @@ async def main(args: argparse.Namespace) -> None:
         question     = (row.get("question_text") or "")[:70]
         slides       = row.get("presentation_slides") or []
 
+        log.info(f"")
+        log.info(f"[Phase A] ── Question {i}/{total} ── {subject_name}")
+        log.info(f"[Phase A]   Q: {question}")
+        log.info(f"[Phase A]   Cache ID: {cache_id[:8]}")
+
         if slides:
-            log.info(f"[Phase A] [{i}/{total}] SKIP (slides exist) | {question}")
+            log.info(f"[Phase A]   → SKIP: slides already exist in DB ({len(slides)} slides) — going straight to media")
             phase_a_done.append(row)
             continue
 
-        log.info(f"[Phase A] [{i}/{total}] Generating | {question}")
+        log.info(f"[Phase A]   → Calling Ollama to generate 7 slides...")
         async with db_factory() as db:
             await _mark_processing(db, cache_id)
 
+        q_start = time.time()
         try:
             async with db_factory() as db:
                 row = await _pregen_text_only(row, db, subject_name=subject_name)
             phase_a_done.append(row)
             n_slides = len(row.get("presentation_slides") or [])
-            log.info(f"[Phase A] OK {cache_id[:8]} | {n_slides} slides")
+            elapsed = round(time.time() - q_start, 1)
+            # Show slide titles so user can verify correctness
+            for j, s in enumerate(row.get("presentation_slides") or []):
+                vtype = f" [{s.get('visual_type','standard')}]" if s.get('visual_type') else ""
+                log.info(f"[Phase A]     Slide {j+1}: {s.get('title','?')}{vtype}")
+            log.info(f"[Phase A]   ✓ DONE: {n_slides} slides generated in {elapsed}s")
         except Exception as e:
-            log.error(f"[Phase A] FAIL {cache_id[:8]}: {e}")
+            log.error(f"[Phase A]   ✗ FAILED: {e}")
             async with db_factory() as db:
                 await _mark_failed(db, cache_id, str(e))
             phase_a_failed.append(cache_id)
 
-    log.info(f"[Phase A] Done: {len(phase_a_done)} ok, {len(phase_a_failed)} failed")
+    elapsed_a = round(time.time() - phase_a_start)
+    log.info(f"")
+    log.info(f"[Phase A] ═══ Phase A Complete in {elapsed_a}s ═══")
+    log.info(f"[Phase A]   ✓ Success: {len(phase_a_done)} | ✗ Failed: {len(phase_a_failed)}")
 
     # ═══════════════════════════════════════════════════════════
     # PHASE B — MEDIA (Wan2GP + VoxCPM)
     # ═══════════════════════════════════════════════════════════
     log.info("\n" + "=" * 60)
-    log.info("  PHASE B -- Media Generation (images + audio)")
+    log.info("  PHASE B -- Media Generation (Wan2GP images + VoxCPM audio)")
+    log.info("  Each slide gets: 1 AI image (Wan2GP) + 1 audio narration (VoxCPM)")
+    log.info("  3 slides processed in parallel per question. Retry: 3 attempts per slide.")
     log.info("=" * 60)
 
+    log.info("[Phase B] Step 2/3: Evicting Ollama from VRAM to free GPU memory for image/audio...")
     try:
         n = await prepare_for_media_generation()
-        log.info(f"[Phase B] Evicted {n} model(s) from VRAM")
+        log.info(f"[Phase B] ✓ {n} model(s) evicted from VRAM — GPU ready for Wan2GP + VoxCPM")
     except Exception as e:
         log.warning(f"[Phase B] Eviction failed (non-fatal): {e}")
 
     phase_b_done: List[Dict[str, Any]] = []
     phase_b_failed: List[str] = []
+    phase_b_start = time.time()
 
     for i, row in enumerate(phase_a_done, 1):
         if _stop_requested:
-            log.warning("[Phase B] Stop requested")
+            log.warning("[Phase B] Stop requested — halting after this point")
             break
 
         cache_id = str(row["id"])
         slides   = row.get("presentation_slides") or []
         question = (row.get("question_text") or "")[:70]
+        subject_name = subject_for_row.get(cache_id, "?")
 
-        log.info(f"[Phase B] [{i}/{len(phase_a_done)}] {question}")
+        log.info(f"")
+        log.info(f"[Phase B] ── Question {i}/{len(phase_a_done)} ── {subject_name}")
+        log.info(f"[Phase B]   Q: {question}")
+        log.info(f"[Phase B]   Slides to process: {len(slides)}")
+        log.info(f"[Phase B]   → Submitting {len(slides)} image jobs to Wan2GP + {len(slides)} audio jobs to VoxCPM...")
+        log.info(f"[Phase B]   (Each slide: image gen ~60-120s, audio gen ~30-60s — running in parallel)")
 
+        q_start = time.time()
         try:
             async with db_factory() as db:
                 enriched_slides, audio_url_list, total_duration, audio_durations, image_urls_map = \
@@ -431,41 +462,64 @@ async def main(args: argparse.Namespace) -> None:
             row["_audio_durations"]  = audio_durations
             row["_image_urls_map"]   = image_urls_map
             phase_b_done.append(row)
-            log.info(f"[Phase B] OK {cache_id[:8]} | {round(total_duration,1)}s | {len(image_urls_map)} imgs")
+
+            elapsed_q = round(time.time() - q_start)
+            # Show per-slide results
+            for j, s in enumerate(enriched_slides):
+                has_img = '✓' if (s.get('infographicUrl') or '').startswith('http') else '✗'
+                has_aud = '✓' if (s.get('audioUrl') or '').startswith('http') else '✗'
+                dur = round(s.get('duration', 0), 1)
+                log.info(f"[Phase B]     Slide {j+1}/{len(enriched_slides)}: img={has_img} audio={has_aud} ({dur}s) — {s.get('title','?')[:40]}")
+
+            imgs_ok  = len(image_urls_map)
+            audio_ok = len(audio_url_list)
+            log.info(f"[Phase B]   ✓ DONE in {elapsed_q}s | Images: {imgs_ok}/{len(slides)} | Audio: {audio_ok}/{len(slides)} | Total audio: {round(total_duration,1)}s")
         except Exception as e:
-            log.error(f"[Phase B] FAIL {cache_id[:8]}: {e}")
+            log.error(f"[Phase B]   ✗ FAILED: {e}")
             async with db_factory() as db:
                 await _mark_failed(db, cache_id, str(e))
             phase_b_failed.append(cache_id)
 
-    log.info(f"[Phase B] Done: {len(phase_b_done)} ok, {len(phase_b_failed)} failed")
+    elapsed_b = round(time.time() - phase_b_start)
+    log.info(f"")
+    log.info(f"[Phase B] ═══ Phase B Complete in {elapsed_b}s ═══")
+    log.info(f"[Phase B]   ✓ Success: {len(phase_b_done)} | ✗ Failed: {len(phase_b_failed)}")
 
     # ═══════════════════════════════════════════════════════════
     # PHASE C — MANIM + SAVE
     # ═══════════════════════════════════════════════════════════
     log.info("\n" + "=" * 60)
-    log.info("  PHASE C -- Manim + Save Results")
+    log.info("  PHASE C -- Manim Animation + Save to DB")
+    log.info("  Manim only runs for slides where LLM set visual_type='manim' (formulas)")
+    log.info("  All results saved to DB with access_tier='free'")
     log.info("=" * 60)
 
-    # Check if any row has formula slides
+    log.info("[Phase C] Step 3/3: Checking for formula slides that need Manim animation...")
     manim_rows_needed = any(
         any(s.get("visual_type") == "manim" for s in (r.get("_enriched_slides") or []))
         for r in phase_b_done
     )
 
+    total_manim_slides = sum(
+        sum(1 for s in (r.get("_enriched_slides") or []) if s.get("visual_type") == "manim")
+        for r in phase_b_done
+    )
+
     manim_ready = False
     if manim_rows_needed:
-        log.info("[Phase C] Formula slides found — loading Ollama for Manim code generation...")
+        log.info(f"[Phase C] Found {total_manim_slides} formula slide(s) across all questions")
+        log.info(f"[Phase C] Reloading Ollama for Manim Python code generation...")
         try:
             manim_ready = await prepare_for_manim_generation()
-            log.info(f"[Phase C] Ollama {'ready' if manim_ready else 'timed out — Manim skipped'}")
+            log.info(f"[Phase C] Ollama {'✓ ready — will generate Manim animations' if manim_ready else '⚠ timed out — Manim skipped, keeping static images'}")
         except Exception as e:
             log.warning(f"[Phase C] Ollama load failed (non-fatal): {e}")
     else:
-        log.info("[Phase C] No formula slides in any row — skipping Manim entirely")
+        log.info("[Phase C] No formula slides found — Manim phase skipped entirely")
 
     save_ok = 0
     save_failed = 0
+    save_start = time.time()
 
     for i, row in enumerate(phase_b_done, 1):
         cache_id        = str(row["id"])
@@ -475,22 +529,28 @@ async def main(args: argparse.Namespace) -> None:
         audio_durations = row["_audio_durations"]
         image_urls_map  = row["_image_urls_map"]
         question        = (row.get("question_text") or "")[:60]
+        subject_name    = subject_for_row.get(cache_id, "?")
 
-        log.info(f"[Save] [{i}/{len(phase_b_done)}] {question}")
+        log.info(f"")
+        log.info(f"[Save] ── Question {i}/{len(phase_b_done)} ── {subject_name}")
+        log.info(f"[Save]   Q: {question}")
 
-        # Manim for this row (only if LLM flagged formula slides)
+        # Manim for this row
         manim_video_urls: dict = {}
         manim_slides_here = [s for s in enriched_slides if s.get("visual_type") == "manim"]
         if manim_slides_here and manim_ready:
-            log.info(f"[Phase C] Generating Manim for {len(manim_slides_here)} formula slide(s)...")
+            log.info(f"[Phase C]   → Generating Manim animations for {len(manim_slides_here)} formula slide(s)...")
             try:
                 manim_video_urls = await _pregen_manim_only(
                     row, enriched_slides, audio_durations, provider="local"
                 )
-                log.info(f"[Phase C] {len(manim_video_urls)} manim video(s) generated")
+                log.info(f"[Phase C]   ✓ {len(manim_video_urls)} Manim video(s) rendered")
             except Exception as e:
-                log.warning(f"[Phase C] Manim failed (non-fatal, keeping static image): {e}")
+                log.warning(f"[Phase C]   ⚠ Manim failed (keeping static image): {e}")
+        elif manim_slides_here:
+            log.info(f"[Phase C]   {len(manim_slides_here)} formula slide(s) — Manim skipped (Ollama not ready)")
 
+        log.info(f"[Save]   → Writing to DB: access_tier=free | {len(enriched_slides)} slides | {round(total_duration,1)}s audio | {len(manim_video_urls)} manim")
         try:
             async with db_factory() as db:
                 await _save_result(
@@ -498,15 +558,19 @@ async def main(args: argparse.Namespace) -> None:
                     total_duration, manim_video_urls, image_urls_map,
                 )
             save_ok += 1
+            log.info(f"[Save]   ✓ Saved and marked done")
         except Exception as e:
-            log.error(f"[Save] FAIL {cache_id[:8]}: {e}")
+            log.error(f"[Save]   ✗ FAILED: {e}")
             save_failed += 1
 
-    # Final report
-    log.info(f"\n[ch1_pregen] Summary:")
-    log.info(f"  Phase A (text):  {len(phase_a_done)} ok / {len(phase_a_failed)} failed")
-    log.info(f"  Phase B (media): {len(phase_b_done)} ok / {len(phase_b_failed)} failed")
-    log.info(f"  Save:            {save_ok} ok / {save_failed} failed")
+    elapsed_total = round(time.time() - phase_a_start)
+    # Final summary
+    log.info(f"")
+    log.info(f"[ch1_pregen] ══════════════ RUN SUMMARY ══════════════")
+    log.info(f"[ch1_pregen]   Total elapsed time: {elapsed_total}s ({round(elapsed_total/60, 1)} min)")
+    log.info(f"[ch1_pregen]   Phase A (text):  {len(phase_a_done):>3} ok  {len(phase_a_failed):>3} failed")
+    log.info(f"[ch1_pregen]   Phase B (media): {len(phase_b_done):>3} ok  {len(phase_b_failed):>3} failed")
+    log.info(f"[ch1_pregen]   Save to DB:      {save_ok:>3} ok  {save_failed:>3} failed")
 
     async with db_factory() as db:
         await _print_final_report(db, all_targets)
