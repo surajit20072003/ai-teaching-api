@@ -150,6 +150,39 @@ async def _fetch_pending_rows(db, subject_id: str, chapter_id: str) -> List[Dict
     return [dict(r._mapping) for r in rows]
 
 
+async def _fetch_manim_retry_rows(db, subject_id: str, chapter_id: str) -> List[Dict[str, Any]]:
+    """
+    Fetch 'done' rows that have formula slides (visual_type='manim') but
+    are missing Manim video URLs. Used by --retry-manim mode.
+    """
+    from sqlalchemy import text
+
+    rows = (await db.execute(text("""
+        SELECT
+            id, question_text, question_hash, subject_id, chapter_id,
+            document_id, language, pregen_status, access_tier,
+            presentation_slides, image_urls, slide_audio_urls, manim_video_urls
+        FROM teaching_qa_cache
+        WHERE subject_id = :sid
+          AND chapter_id = :cid
+          AND pregen_status = 'done'
+          AND presentation_slides IS NOT NULL
+          AND jsonb_array_length(presentation_slides) > 0
+          AND (
+              manim_video_urls IS NULL
+              OR manim_video_urls = '{}'::jsonb
+              OR manim_video_urls = 'null'::jsonb
+          )
+          AND EXISTS (
+              SELECT 1 FROM jsonb_array_elements(presentation_slides) AS slide
+              WHERE slide->>'visual_type' = 'manim'
+          )
+        ORDER BY created_at ASC
+    """), {"sid": subject_id, "cid": chapter_id})).fetchall()
+
+    return [dict(r._mapping) for r in rows]
+
+
 async def _mark_processing(db, cache_id: str):
     from sqlalchemy import text
     await db.execute(
@@ -330,6 +363,118 @@ async def main(args: argparse.Namespace) -> None:
                 subject_for_row[str(row["id"])] = t["subject_name"]
 
     total = len(all_rows)
+
+    # ═══════════════════════════════════════════════════════════
+    # --retry-manim: Phase C ONLY for formula slides missing Manim
+    # ═══════════════════════════════════════════════════════════
+    if args.retry_manim:
+        log.info("\n" + "=" * 60)
+        log.info("  --retry-manim MODE: Phase C Only (Manim generation)")
+        log.info("  Fetching 'done' rows with formula slides but no Manim video")
+        log.info("=" * 60)
+
+        manim_rows: List[Dict[str, Any]] = []
+        async with db_factory() as db:
+            for t in all_targets:
+                rows = await _fetch_manim_retry_rows(db, t["subject_id"], t["chapter_id"])
+                log.info(f"  {t['subject_name']} Ch1: {len(rows)} rows need Manim")
+                for row in rows:
+                    manim_rows.append(row)
+                    subject_for_row[str(row["id"])] = t["subject_name"]
+
+        if not manim_rows:
+            log.info("✅ No missing Manim videos found — all formula slides already have Manim!")
+            async with db_factory() as db:
+                await _print_final_report(db, all_targets)
+            return
+
+        log.info(f"\nTotal rows needing Manim: {len(manim_rows)}\n")
+
+        if args.dry_run:
+            log.info("[DRY RUN --retry-manim] Would generate Manim for:")
+            for i, row in enumerate(manim_rows, 1):
+                subj = subject_for_row.get(str(row["id"]), "?")
+                slides = row.get("presentation_slides") or []
+                n_manim = sum(1 for s in slides if s.get("visual_type") == "manim")
+                log.info(f"  [{i}/{len(manim_rows)}] {subj} | {n_manim} formula slides | {(row.get('question_text') or '')[:60]}")
+            log.info("[DRY RUN] Done.")
+            return
+
+        # Load Manim provider
+        if manim_provider == "openrouter":
+            log.info(f"[Manim Retry] Using OpenRouter (cloud) — no local Ollama needed")
+            manim_model_ready = True
+        else:
+            log.info(f"[Manim Retry] Loading local Ollama for Manim code generation...")
+            try:
+                manim_model_ready = await prepare_for_manim_generation()
+                log.info(f"[Manim Retry] Ollama {'✓ ready' if manim_model_ready else '⚠ timed out'}")
+            except Exception as e:
+                log.warning(f"[Manim Retry] Ollama load failed: {e}")
+                manim_model_ready = False
+
+        manim_ok = manim_fail = 0
+        run_start = time.time()
+
+        for i, row in enumerate(manim_rows, 1):
+            if _stop_requested:
+                log.warning("[Manim Retry] Stop requested")
+                break
+
+            cache_id     = str(row["id"])
+            slides       = row.get("presentation_slides") or []
+            language     = row.get("language") or "hi-IN"
+            subject_name = subject_for_row.get(cache_id, "?")
+            question     = (row.get("question_text") or "")[:60]
+            n_manim      = sum(1 for s in slides if s.get("visual_type") == "manim")
+            audio_durations: dict = {}
+
+            # Reconstruct audio_durations from slide_audio_urls
+            audio_data = (row.get("slide_audio_urls") or {}).get("urls", [])
+            for entry in audio_data:
+                idx = entry.get("slideIndex")
+                dur = entry.get("duration", 0)
+                if idx is not None and dur:
+                    audio_durations[idx] = dur
+
+            log.info(f"")
+            log.info(f"[Manim Retry] ── [{i}/{len(manim_rows)}] {subject_name}")
+            log.info(f"[Manim Retry]   Q: {question}")
+            log.info(f"[Manim Retry]   → Generating Manim via {manim_provider} for {n_manim} formula slide(s)...")
+
+            try:
+                manim_video_urls = await _pregen_manim_only(
+                    row, slides, audio_durations, provider=manim_provider
+                )
+                if manim_video_urls:
+                    # Save only the manim_video_urls update to DB
+                    from sqlalchemy import text as _text
+                    import json as _json
+                    async with db_factory() as db:
+                        await db.execute(_text("""
+                            UPDATE teaching_qa_cache
+                            SET manim_video_urls = CAST(:manim AS jsonb)
+                            WHERE id = CAST(:id AS uuid)
+                        """), {"manim": _json.dumps(manim_video_urls), "id": cache_id})
+                        await db.commit()
+                    log.info(f"[Manim Retry]   ✓ {len(manim_video_urls)} Manim video(s) saved")
+                    manim_ok += 1
+                else:
+                    log.warning(f"[Manim Retry]   ⚠ No Manim videos generated (formula render may have failed)")
+                    manim_fail += 1
+            except Exception as e:
+                log.error(f"[Manim Retry]   ✗ FAILED: {e}")
+                manim_fail += 1
+
+        elapsed = round(time.time() - run_start)
+        log.info(f"")
+        log.info(f"[Manim Retry] ══ Complete in {elapsed}s ══")
+        log.info(f"[Manim Retry]   ✓ Success: {manim_ok} | ✗ Failed: {manim_fail}")
+        async with db_factory() as db:
+            await _print_final_report(db, all_targets)
+        return
+
+    # Normal mode: process pending rows
     if total == 0:
         log.info("All Chapter 1 questions already fully generated!")
         async with db_factory() as db:
@@ -593,6 +738,11 @@ if __name__ == "__main__":
         default="openrouter",
         choices=["openrouter", "local"],
         help="LLM provider for Manim code generation: 'openrouter' (cloud, better quality, default) or 'local' (Ollama on GPU server)"
+    )
+    parser.add_argument(
+        "--retry-manim",
+        action="store_true",
+        help="Only re-run Phase C (Manim) for done rows that have formula slides but missing Manim videos"
     )
     args = parser.parse_args()
     asyncio.run(main(args))
