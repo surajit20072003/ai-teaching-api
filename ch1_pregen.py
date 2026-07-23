@@ -153,10 +153,12 @@ async def _fetch_pending_rows(db, subject_id: str, chapter_id: str) -> List[Dict
 async def _fetch_manim_retry_rows(db, subject_id: str, chapter_id: str) -> List[Dict[str, Any]]:
     """
     Fetch 'done' rows that have formula slides (visual_type='manim') but
-    are missing Manim video URLs. Used by --retry-manim mode.
+    are missing or have PARTIAL Manim video URLs. Filters in Python because
+    partial detection (n_slides != n_urls) is hard to express cleanly in SQL.
     """
     from sqlalchemy import text
 
+    # Fetch all done rows that have at least one manim-type slide
     rows = (await db.execute(text("""
         SELECT
             id, question_text, question_hash, subject_id, chapter_id,
@@ -168,19 +170,35 @@ async def _fetch_manim_retry_rows(db, subject_id: str, chapter_id: str) -> List[
           AND pregen_status = 'done'
           AND presentation_slides IS NOT NULL
           AND jsonb_array_length(presentation_slides) > 0
-          AND (
-              manim_video_urls IS NULL
-              OR manim_video_urls = '{}'::jsonb
-              OR manim_video_urls = 'null'::jsonb
-          )
-          AND EXISTS (
-              SELECT 1 FROM jsonb_array_elements(presentation_slides) AS slide
-              WHERE slide->>'visual_type' = 'manim'
-          )
         ORDER BY created_at ASC
     """), {"sid": subject_id, "cid": chapter_id})).fetchall()
 
-    return [dict(r._mapping) for r in rows]
+    result = []
+    for r in rows:
+        row = dict(r._mapping)
+        slides     = row.get("presentation_slides") or []
+        manim_urls = row.get("manim_video_urls") or {}
+
+        # Indices of slides that need Manim animation
+        manim_slide_indices = {
+            i for i, s in enumerate(slides)
+            if s.get("visual_type") == "manim"
+        }
+        if not manim_slide_indices:
+            continue   # no formula slides — skip
+
+        # Indices that already have a valid http URL
+        manim_done_indices = {
+            int(k) for k, v in manim_urls.items()
+            if isinstance(v, dict) and (v.get("url") or "").startswith("http")
+        }
+
+        # Any formula slides missing a URL?
+        if manim_slide_indices - manim_done_indices:
+            result.append(row)
+
+    return result
+
 
 
 async def _mark_processing(db, cache_id: str):
