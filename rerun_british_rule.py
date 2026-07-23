@@ -20,6 +20,7 @@ from db.models import AsyncSessionLocal, TeachingCache
 from core.slide_generator import generate_slides
 from core.pregen import _process_slide   # Wan2GP image + VoxCPM audio (local GPU)
 from core.cache import get_redis, hash_question
+from core.ollama_lifecycle import prepare_for_text_generation, prepare_for_media_generation
 
 # ── Config ────────────────────────────────────────────────────────────────────
 SUBJECT_ID   = "b4b83f9b-bc1f-433c-9400-234e50ac1b70"
@@ -219,7 +220,10 @@ async def main():
                     print(f"  [RAG] ⚠️  No document chunks found — using pure LLM")
 
                 # 2. Generate slides
-                print(f"  [Slides] Calling OpenRouter (Gemini 2.5 Flash)…")
+                print(f"  [Model] Loading Ollama into VRAM (unloading media models)...")
+                await prepare_for_text_generation()
+                
+                print(f"  [Slides] Calling Ollama (qwen2.5-coder:32b) for local pregen generation…")
                 slides_data = await generate_slides(
                     question=question,
                     subject=SUBJECT_NAME,
@@ -231,6 +235,9 @@ async def main():
 
                 # 3. Images + Audio via Wan2GP + VoxCPM (pregen local path)
                 # Sequential per slide to avoid overloading GPU (same as pregen pipeline)
+                print(f"  [Model] Loading Wan2GP + VoxCPM into VRAM (unloading Ollama)...")
+                await prepare_for_media_generation()
+                
                 print(f"  [Media] Processing {len(slides)} slides via Wan2GP + VoxCPM…")
                 cache_id = str(_uuid.uuid4())
                 total_dur = 0.0
