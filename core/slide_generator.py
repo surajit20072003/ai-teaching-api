@@ -8,21 +8,21 @@ OPENROUTER_BASE    = "https://openrouter.ai/api/v1/chat/completions"
 OPENROUTER_LLM     = "google/gemini-2.5-flash"          # real-time: fast cloud
 
 OLLAMA_URL         = os.getenv("OLLAMA_URL", "http://host.docker.internal:11434")
-OLLAMA_MODEL       = os.getenv("OLLAMA_MODEL", "qwen2.5-coder:32b")   # upgraded: stronger coding+reasoning model
-OLLAMA_TIMEOUT     = int(os.getenv("OLLAMA_TIMEOUT", "900"))             # 15 min — qwen3-coder is larger
+OLLAMA_MODEL       = os.getenv("OLLAMA_MODEL", "qwen2.5-coder:32b")
+OLLAMA_TIMEOUT     = int(os.getenv("OLLAMA_TIMEOUT", "900"))
 
-# ── Prompts ───────────────────────────────────────────────────────────────────
+# ── Base JSON format spec (shared by all prompts) ─────────────────────────────
 _BASE_FORMAT = """
 Reply ONLY with this exact JSON (no markdown fences, no extra text):
 {{
   "presentation_slides": [
     {{
-      "title": "Introduction to ...",
-      "content": "Main explanation text...",
-      "narration": "See, what happens here is... [conversational 150-250 words]",
+      "title": "Slide title here",
+      "content": "Clear 2-3 sentence explanation of this slide's sub-topic.",
+      "narration": "Conversational teacher voice — 180-280 words. Explain step by step. Include a real-life example. Do NOT start with Hello/Welcome/Good morning.",
       "keyPoints": ["Point 1", "Point 2", "Point 3"],
-      "formula": "F = ma",
-      "infographic": "Diagram showing ...",
+      "formula": "LaTeX string if math present, else empty string",
+      "infographic": "Specific, concrete diagram description (e.g. 'Factor tree of 72 = 2×2×2×3×3 as branching diagram with labeled nodes', NOT 'concept diagram')",
       "isStory": false,
       "isTips": false,
       "visual_type": "image"
@@ -30,56 +30,90 @@ Reply ONLY with this exact JSON (no markdown fences, no extra text):
   ],
   "latex_formulas": [{{"formula": "F=ma", "explanation": "Force equals mass times acceleration"}}],
   "key_points": ["Summary point 1", "Summary point 2"],
-  "follow_up_questions": ["Can you explain inertia?", "What is impulse?"]
+  "follow_up_questions": ["Follow-up question 1?", "Follow-up question 2?"]
 }}"""
 
-SLIDE_PROMPT = (
-    "You are Professor AI, an expert Indian teacher specializing in {subject}.\n"
-    "Generate a 6-7 slide mini-lecture for this student question: \"{question}\"\n\n"
-    "RULES:\n"
-    "1. Each slide covers a DISTINCT sub-topic — no repetition across slides.\n"
-    "2. Narration: MINIMUM 220 words. Count them. Conversational teacher voice. "
-    "   Explain step-by-step. Include a concrete real-life example in EVERY slide. "
-    "   Do NOT start with 'Hello', 'Welcome', 'Good morning', or any greeting.\n"
-    "3. 'content' field: clear 2-3 sentence explanation of that slide's sub-topic.\n"
-    "4. 'infographic' field: describe a SPECIFIC visual (e.g. 'Factor tree of 72 = 2x2x2x3x3', NOT 'diagram of concept').\n"
-    "5. 'keyPoints': exactly 3 crisp bullet points for the slide.\n"
-    "6. 'formula': LaTeX string if slide has math, else empty string \"\".\n"
-    "7. Last slide MUST have isStory: true — a real-world analogy or story that makes the concept unforgettable.\n"
-    "8. Second-to-last slide MUST have isTips: true — mnemonic tricks and memory aids.\n"
-    "9. You MUST generate AT LEAST 5 slides. Aim for 6-7.\n"
-    "10. 'visual_type': use \"manim\" if the slide has a math formula, graph, derivation, or geometric diagram "
-    "    that benefits from animation. Use \"image\" for story/tips/concept slides without math.\n"
-    "    isStory and isTips slides MUST always have visual_type: \"image\".\n"
-) + _BASE_FORMAT
+# ── Prompt: Pure LLM (no document context) ────────────────────────────────────
+SLIDE_PROMPT = """\
+You are Professor AI — a brilliant, engaging Indian teacher specialising in {subject}.
+A student asked: "{question}"
 
-RAG_PROMPT = (
-    "You are Professor AI, an expert Indian teacher specializing in {subject}.\n"
-    "A student asked: \"{question}\"\n\n"
-    "Here is relevant content from the official course material:\n"
-    "--- BEGIN DOCUMENT CONTEXT ---\n"
-    "{context}\n"
-    "--- END DOCUMENT CONTEXT ---\n\n"
-    "Generate a 6-7 slide mini-lecture STRICTLY based ONLY on the document content above.\n\n"
-    "CRITICAL RULES — MUST FOLLOW ALL:\n"
-    "1. ONLY use facts, examples, definitions, and numbers from the document. DO NOT invent anything.\n"
-    "2. Quote the document's specific examples verbatim where possible (e.g. if doc says '4^n = 2^2n', use it).\n"
-    "3. If the document has numbered theorems or definitions, reference them by number (e.g. 'Theorem 1.2 states...').\n"
-    "4. Narration: MINIMUM 220 words. Count them. Sound like a teacher reading the textbook aloud and "
-    "   explaining each line step by step. Do NOT start with 'Hello', 'Welcome', or any greeting.\n"
-    "5. 'content' field: 2-3 sentence direct summary pulled from document text.\n"
-    "6. 'infographic' field: describe a SPECIFIC diagram tied to the document's example\n"
-    "   (e.g. 'Factor tree: 12 = 2 x 2 x 3, shown as branching tree diagram' NOT 'diagram of concept').\n"
-    "7. 'keyPoints': exactly 3 bullet points — each must be a fact or formula FROM the document.\n"
-    "8. 'formula': exact LaTeX of any formula in the document for this slide, else empty string \"\".\n"
-    "9. Each slide must cover a DISTINCT section of the document — spread content across all slides.\n"
-    "10. Last slide MUST have isStory: true — a real-world analogy tied directly to the document topic.\n"
-    "11. Second-to-last slide MUST have isTips: true — memory tricks for the document's key theorems/formulas.\n"
-    "12. Add \"is_doc_grounded\": true to the JSON root.\n"
-    "13. You MUST generate AT LEAST 5 slides. Aim for 6-7.\n"
-    "14. 'visual_type': use \"manim\" if the slide has a math formula, graph, derivation, or geometric diagram. "
-    "    Use \"image\" for story/tips/concept slides. isStory and isTips slides MUST have visual_type: \"image\".\n"
-) + _BASE_FORMAT.replace(
+━━━ STEP 1 — DECIDE SLIDE COUNT (do this BEFORE writing any slide) ━━━
+Analyse the question complexity and choose the right number of slides:
+  • 1–2 slides → simple facts, dates, single definitions, yes/no answers
+  • 3–4 slides → concepts, processes, comparisons, cause-effect
+  • 5–6 slides → multi-part topics, laws/theories with proofs, multi-stage systems
+MAXIMUM is 6 slides. NEVER write more than 6.
+
+━━━ STEP 2 — SLIDE RULES ━━━
+1. Each slide covers a DISTINCT sub-topic — zero repetition across slides.
+2. Narration: 180–280 words. Sound like an enthusiastic teacher in a classroom.
+   Use simple language (suitable for a 14–16 year old). Include one real-life analogy per slide.
+   Do NOT start with "Hello", "Welcome", "Good morning", or any greeting.
+3. "content": clear 2-3 sentence explanation of that slide's sub-topic.
+4. "infographic": describe ONE specific visual with exact content
+   (e.g. "Diagram of food chain: Sun → Grass → Rabbit → Fox, with arrows and labels"
+    NOT "diagram of concept").
+5. "keyPoints": exactly 3 crisp bullet points per slide.
+6. "formula": exact LaTeX if slide has math, else empty string "".
+7. "visual_type": "manim" for math formulas/graphs/geometry. "image" for everything else.
+   isStory and isTips slides MUST always be "image".
+
+━━━ STEP 3 — SPECIAL SLIDES (only if total slides ≥ 3) ━━━
+• Second-to-last slide → isTips: true — memorable mnemonics and memory tricks.
+• Last slide → isStory: true — a vivid real-world story/analogy that makes the concept unforgettable.
+  (Skip these for 1–2 slide answers — they don't need padding)
+
+""" + _BASE_FORMAT
+
+# ── Prompt: Document-first + LLM-enriched (with RAG context) ─────────────────
+RAG_PROMPT = """\
+You are Professor AI — a brilliant, engaging Indian teacher specialising in {subject}.
+A student asked: "{question}"
+
+Here is relevant content from the official course material:
+--- BEGIN DOCUMENT CONTEXT ---
+{context}
+--- END DOCUMENT CONTEXT ---
+
+━━━ STEP 1 — DECIDE SLIDE COUNT (do this BEFORE writing any slide) ━━━
+Analyse the question complexity and choose the right number of slides:
+  • 1–2 slides → simple facts, dates, single definitions, yes/no answers
+  • 3–4 slides → concepts, processes, comparisons, cause-effect
+  • 5–6 slides → multi-part topics, laws/theories with proofs, multi-stage systems
+MAXIMUM is 6 slides. NEVER write more than 6.
+
+━━━ STEP 2 — CONTENT STRATEGY ━━━
+Use the document content as your PRIMARY source of facts, numbers, and definitions.
+Then ENRICH with your own knowledge to make explanations clear, vivid, and memorable.
+
+RULES:
+• NEVER say "according to the document", "the text states", or any citation phrase.
+• Write confidently, like a teacher who truly understands the topic — not like someone reading from a book.
+• Prioritise accuracy to the document's facts, but explain them in natural, engaging language.
+• Add helpful analogies, step-by-step reasoning, or real-world examples the document may not include.
+• Add "is_doc_grounded": true to the JSON root.
+
+━━━ STEP 3 — SLIDE RULES ━━━
+1. Each slide covers a DISTINCT sub-topic — zero repetition across slides.
+2. Narration: 180–280 words. Conversational teacher voice. Simple language (14–16 year old level).
+   Include one concrete real-life example per slide.
+   Do NOT start with "Hello", "Welcome", "Good morning", or any greeting.
+3. "content": clear 2-3 sentence explanation drawn from the document facts.
+4. "infographic": describe ONE specific visual with exact content
+   (e.g. "Venn diagram comparing photosynthesis vs respiration with 3 differences labelled"
+    NOT "diagram of concept").
+5. "keyPoints": exactly 3 crisp, fact-based bullet points per slide.
+6. "formula": exact LaTeX if slide has math, else empty string "".
+7. "visual_type": "manim" for math/graphs/geometry slides. "image" for all others.
+   isStory and isTips slides MUST always be "image".
+
+━━━ STEP 4 — SPECIAL SLIDES (only if total slides ≥ 3) ━━━
+• Second-to-last slide → isTips: true — memorable mnemonics and memory tricks for exam.
+• Last slide → isStory: true — a vivid real-world analogy that makes the concept unforgettable.
+  (Skip these for 1–2 slide answers — they don't need padding)
+
+""" + _BASE_FORMAT.replace(
     '"presentation_slides"',
     '"is_doc_grounded": true,\n  "presentation_slides"'
 )
@@ -110,48 +144,74 @@ def _parse_slides(raw: str) -> dict:
             raise ValueError(f"Cannot parse LLM response as JSON: {raw[:200]}")
 
     slides = data.get("presentation_slides", [])
-    if not any(s.get("isTips") for s in slides):
-        slides.append({
-            "title": "Tips & Tricks to Remember",
-            "content": "Key memory aids for this concept",
-            "narration": "Here are tips to remember this concept easily. Use mnemonics and visual associations. "
-                         "First, create a mental image of the key idea. Second, link it to something you already know. "
-                         "Third, practice writing the formula or definition three times without looking. "
-                         "Fourth, explain it out loud to someone as if you are the teacher. "
-                         "Fifth, make a short note card with the key formula on one side and an example on the other. "
-                         "These five techniques together will lock this concept in your long-term memory.",
-            "keyPoints": ["Make a diagram", "Use mnemonics", "Practice with examples"],
-            "formula": "", "infographic": "Lightbulb with numbered tips list", "isStory": False, "isTips": True
-        })
-    if not any(s.get("isStory") for s in slides):
-        slides.append({
-            "title": "A Story to Remember",
-            "content": "Real world analogy",
-            "narration": "Let me tell you a story that will help you remember this concept forever. "
-                         "Imagine you are explaining this to a friend who has never studied this topic before. "
-                         "You would start with something they already know from daily life, then connect it step by step "
-                         "to the idea we just learned. This is exactly how great teachers make difficult concepts stick. "
-                         "The real world is full of examples of this concept if you look carefully. "
-                         "So next time you encounter this in an exam or in life, you will recognize it immediately "
-                         "because you have this story anchored in your memory.",
-            "keyPoints": ["Real world connection", "Easy to visualize", "Never forget"],
-            "formula": "", "infographic": "Story illustration with characters", "isStory": True, "isTips": False
-        })
-    # Enforce minimum 5 slides
-    if len(slides) < 5:
-        logger.warning(f"[SlideGen] Only {len(slides)} slides generated — model produced too few. Check prompt/token limit.")
 
-    # Ensure visual_type defaults to "image" if not provided
+    # ── Cap at 6 slides (truncate if LLM went over) ───────────────────────────
+    if len(slides) > 6:
+        logger.warning(f"[SlideGen] LLM returned {len(slides)} slides — truncating to 6")
+        # Try to preserve the last isStory/isTips slides if they exist
+        story_slides = [s for s in slides if s.get("isStory")]
+        tips_slides  = [s for s in slides if s.get("isTips")]
+        body_slides  = [s for s in slides if not s.get("isStory") and not s.get("isTips")]
+        slides = body_slides[:6 - len(story_slides) - len(tips_slides)] + tips_slides + story_slides
+        slides = slides[:6]
+
+    # ── Only add fallback Tips/Story if total slides >= 3 ─────────────────────
+    if len(slides) >= 3:
+        if not any(s.get("isTips") for s in slides):
+            slides.insert(-1 if len(slides) > 1 else len(slides), {
+                "title": "Tips & Tricks to Remember",
+                "content": "Key memory aids and mnemonics for this concept.",
+                "narration": (
+                    "Now let me give you some powerful tricks to lock this concept in your memory forever. "
+                    "The best students don't just read — they create mental hooks. "
+                    "First, link the new concept to something you already know from daily life. "
+                    "Second, write down the key formula or definition three times without looking. "
+                    "Third, make a mind map connecting the main idea to its sub-topics. "
+                    "Fourth, explain it out loud as if you are teaching a friend — "
+                    "this forces your brain to actually understand rather than just recognise. "
+                    "Fifth, create a simple acronym or rhyme for any list you need to memorise. "
+                    "Use these five techniques together, and this concept will stay with you "
+                    "long after the exam is over."
+                ),
+                "keyPoints": ["Create a mental hook or analogy", "Write it 3 times to lock it in", "Teach it to someone else"],
+                "formula": "", "infographic": "Lightbulb with 5 numbered tips, colourful icons for each step",
+                "isStory": False, "isTips": True, "visual_type": "image"
+            })
+        if not any(s.get("isStory") for s in slides):
+            slides.append({
+                "title": "A Story to Remember",
+                "content": "A real-world analogy to make this concept unforgettable.",
+                "narration": (
+                    "Let me leave you with a story that will make this concept impossible to forget. "
+                    "The best way to truly understand any idea is to see it alive in the world around you. "
+                    "Think about how this concept shows up in everyday life — in the kitchen, on a road trip, "
+                    "in a cricket match, or in something you use every single day. "
+                    "When you can connect what you learn in the classroom to something real, "
+                    "you have not just memorised it — you have understood it. "
+                    "And understanding is what leads to top marks, not just memorisation. "
+                    "So the next time you encounter this topic in an exam or in life, "
+                    "remember this story, remember the connection, and the answer will come naturally."
+                ),
+                "keyPoints": ["Connect to real life", "See it, visualise it", "Understanding beats memorisation"],
+                "formula": "", "infographic": "Warm classroom scene with teacher and students, light bulb of insight above",
+                "isStory": True, "isTips": False, "visual_type": "image"
+            })
+
+    if not slides:
+        logger.warning("[SlideGen] No slides generated — model produced empty response.")
+    elif len(slides) < 3:
+        logger.info(f"[SlideGen] {len(slides)} slide(s) generated — short answer mode.")
+
+    # ── Ensure visual_type defaults correctly ────────────────────────────────
     for slide in slides:
         if not slide.get("visual_type"):
-            # Force image for story/tips; default to manim if formula present, else image
             if slide.get("isStory") or slide.get("isTips"):
                 slide["visual_type"] = "image"
             elif slide.get("formula", "").strip():
                 slide["visual_type"] = "manim"
             else:
                 slide["visual_type"] = "image"
-        # Safety: story/tips must always be image even if LLM set manim
+        # Safety: story/tips must always be image
         if slide.get("isStory") or slide.get("isTips"):
             slide["visual_type"] = "image"
 
@@ -164,16 +224,15 @@ async def _generate_via_ollama(prompt: str) -> str:
     """
     PRE-GENERATION PATH: Call local Ollama — free, local GPU, no API cost.
     NO fallback. If Ollama is down, the batch row is marked failed and retried later.
-    Timeout: 600s (10 min) to accommodate slow local models.
     """
     url = f"{OLLAMA_URL}/api/chat"
     payload = {
         "model":      OLLAMA_MODEL,
         "stream":     False,
-        "format":     "json",                                    # Forces Ollama to output valid JSON always
+        "format":     "json",
         "messages":   [{"role": "user", "content": prompt}],
-        "keep_alive": -1,                                        # Never auto-unload during long generation
-        "options":    {"temperature": 0.7, "num_predict": 8000, "num_ctx": 8192},  # 8000 tokens → richer 220+ word narrations
+        "keep_alive": -1,
+        "options":    {"temperature": 0.65, "num_predict": 8000, "num_ctx": 8192},
     }
     logger.info(f"[SlideGen/Ollama] POST {url} model={OLLAMA_MODEL} timeout={OLLAMA_TIMEOUT}s")
     async with httpx.AsyncClient(timeout=OLLAMA_TIMEOUT) as client:
@@ -201,13 +260,9 @@ async def _generate_via_openrouter(prompt: str) -> str:
             },
         )
         if resp.status_code == 402:
-            raise RuntimeError(
-                "OpenRouter credits exhausted. Top up at https://openrouter.ai/credits"
-            )
+            raise RuntimeError("OpenRouter credits exhausted. Top up at https://openrouter.ai/credits")
         if resp.status_code == 429:
-            raise RuntimeError(
-                "OpenRouter rate limit — retry in a few seconds."
-            )
+            raise RuntimeError("OpenRouter rate limit — retry in a few seconds.")
         resp.raise_for_status()
     content = resp.json()["choices"][0]["message"]["content"]
     logger.info(f"[SlideGen/OpenRouter] OK — {len(content)} chars")
@@ -222,7 +277,7 @@ async def generate_slides(
     use_local:  bool = False,
 ) -> dict:
     """
-    Generate 6-7 structured lecture slides.
+    Generate 1–6 structured lecture slides (count decided by LLM based on complexity).
 
     use_local=True  → Ollama (offline pre-gen, FREE, local GPU, timeout=600s)
                       NO fallback — failure = row marked failed, retried later
@@ -235,10 +290,8 @@ async def generate_slides(
     )
 
     if use_local:
-        # ── Pre-generation: Ollama only — NO fallback ─────────────────────
         raw = await _generate_via_ollama(prompt)
     else:
-        # ── Real-time: OpenRouter only ────────────────────────────────────
         raw = await _generate_via_openrouter(prompt)
 
     return _parse_slides(raw)

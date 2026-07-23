@@ -11,19 +11,61 @@ IMAGE_SEMAPHORE = asyncio.Semaphore(10)
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY")
 
 
+def _build_image_prompt(slide: dict) -> str:
+    """
+    Build a high-quality educational infographic prompt.
+    Prioritises readable text labels, high contrast, and clear diagram structure.
+    """
+    title = (slide.get("title") or "Educational Concept").strip()
+    info  = (slide.get("infographic") or "educational diagram").strip()
+    is_story = slide.get("isStory", False)
+    is_tips  = slide.get("isTips", False)
+
+    if is_story:
+        return (
+            f"Warm, vivid educational illustration titled \"{title}\". "
+            f"Scene: {info}. "
+            "Style: Friendly textbook illustration, like a well-designed children's encyclopedia. "
+            "Bright, engaging colours. Characters or objects clearly drawn. "
+            "Add a short bold title label at the top. "
+            "White or very light background. Clean and professional. "
+            "NO watermarks. NO decorative borders."
+        )
+
+    if is_tips:
+        return (
+            f"Educational tips infographic titled \"{title}\". "
+            f"Layout: {info}. "
+            "Style: Clean numbered list design, like a modern study poster. "
+            "Each tip in a distinct coloured card or box. "
+            "Bold dark text on light backgrounds for each tip. Minimum font size equivalent to 18pt. "
+            "Title at top in large bold text. "
+            "White background. High contrast. Clearly readable at a glance. "
+            "NO watermarks."
+        )
+
+    # Standard educational diagram
+    return (
+        f"Educational infographic titled \"{title}\": {info}. "
+        "Style: Precise textbook diagram, similar to NCERT or school science book illustrations. "
+        "Layout: Landscape orientation, white or very light grey background. "
+        "Text requirements: ALL labels must be in bold, dark (black or dark grey) text. "
+        "Font size equivalent to minimum 16pt — clearly readable. "
+        "Diagram elements: Clean lines, arrows with labels, numbered steps where applicable. "
+        "Colour: Use 2–4 distinct, high-contrast colours to differentiate elements. "
+        "Every key part of the diagram must have a text label. "
+        "NO decorative patterns. NO gradients on text. NO watermarks. "
+        "Suitable for students aged 14–18. Professional and clean."
+    )
+
+
 async def generate_one_image(slide: dict, cache_id: str, idx: int, subject_id: str = "") -> str:
     """
     Generate one infographic image for a slide via OpenRouter/Gemini.
     Dual-writes: local /sdb-disk + B2 cloud.
     Returns the B2 public URL (empty string on failure).
     """
-    title = slide.get("title", "")
-    info  = slide.get("infographic", "educational diagram")
-
-    prompt = (
-        f"Professional educational infographic about {title}: {info}. "
-        "Clean vector art style, minimalist, no text, colorful, high quality."
-    )
+    prompt = _build_image_prompt(slide)
 
     url = "https://openrouter.ai/api/v1/chat/completions"
     headers = {
@@ -39,7 +81,7 @@ async def generate_one_image(slide: dict, cache_id: str, idx: int, subject_id: s
 
     try:
         async with IMAGE_SEMAPHORE:
-            print(f"[Image] Slide {idx} → calling OpenRouter (Flux)")
+            print(f"[Image] Slide {idx} → calling OpenRouter (Gemini Image)")
             async with httpx.AsyncClient(timeout=120) as client:
                 resp = await client.post(url, headers=headers, json=payload)
                 resp.raise_for_status()
@@ -57,7 +99,6 @@ async def generate_one_image(slide: dict, cache_id: str, idx: int, subject_id: s
             if images:
                 img = images[0]
                 if isinstance(img, dict):
-                    # Gemini: {"type": "image_url", "image_url": {"url": "data:image/png;base64,..."}}
                     if img.get("type") == "image_url":
                         image_b64 = img.get("image_url", {}).get("url", "")
                     else:

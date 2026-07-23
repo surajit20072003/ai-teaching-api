@@ -18,7 +18,7 @@ import asyncio, json, time, uuid as _uuid
 from sqlalchemy import text, update
 from db.models import AsyncSessionLocal, TeachingCache
 from core.slide_generator import generate_slides
-from core.pregen import _process_slide   # Wan2GP image + VoxCPM audio (local GPU)
+from core.pregen import _process_slide, _enhance_image_prompt_llm   # Wan2GP + VoxCPM (local GPU)
 from core.cache import get_redis, hash_question
 from core.ollama_lifecycle import prepare_for_text_generation, prepare_for_media_generation
 
@@ -232,6 +232,19 @@ async def main():
                 )
                 slides = slides_data.get("presentation_slides", [])
                 print(f"  [Slides] ✅ {len(slides)} slides generated")
+
+                # 2.5 Phase A.5 — LLM image prompt enhancement (Ollama still in VRAM)
+                # Call _enhance_image_prompt_llm() for every slide BEFORE evicting Ollama.
+                # This writes a rich, rule-following image prompt into each slide dict.
+                print(f"  [Prompts] Enhancing image prompts for {len(slides)} slides...")
+                for i, slide in enumerate(slides):
+                    try:
+                        enhanced = await _enhance_image_prompt_llm(slide)
+                        slides[i]["enhanced_image_prompt"] = enhanced
+                        print(f"    slide {i+1}: prompt enhanced ({len(enhanced)} chars)")
+                    except Exception as e:
+                        print(f"    slide {i+1}: prompt enhance failed (non-fatal): {e}")
+                print(f"  [Prompts] ✅ image prompts enhanced")
 
                 # 3. Images + Audio via Wan2GP + VoxCPM (pregen local path)
                 # Sequential per slide to avoid overloading GPU (same as pregen pipeline)

@@ -167,6 +167,64 @@ def _build_image_prompt(slide: dict) -> str:
     )
     return prompt
 
+
+async def _enhance_image_prompt_llm(slide: dict) -> str:
+    """
+    Phase A.5: Use Ollama (already in VRAM from text generation) to produce
+    a rich, rule-following educational image prompt from a slide dict.
+
+    Runs BEFORE prepare_for_media_generation() so Ollama is still loaded.
+    Falls back silently to template-based _build_image_prompt() on any error.
+    """
+    from core.slide_generator import OLLAMA_URL, OLLAMA_MODEL
+    import httpx
+
+    system_prompt = _load_prompt_file("image_system_prompt.txt")
+    if not system_prompt:
+        _log("[Pregen-A5] image_system_prompt.txt not found — using template fallback")
+        return _build_image_prompt(slide)
+
+    slide_type = (
+        "story" if slide.get("isStory")
+        else "tips" if slide.get("isTips")
+        else "formula" if (slide.get("formula") or slide.get("visual_type") == "manim")
+        else "concept"
+    )
+
+    user_content = json.dumps({
+        "title":       slide.get("title", ""),
+        "infographic": slide.get("infographic") or slide.get("content") or "",
+        "key_points":  (slide.get("keyPoints") or [])[:4],
+        "slide_type":  slide_type,
+        "formula":     slide.get("formula", "") or "",
+    }, ensure_ascii=False)
+
+    payload = {
+        "model":      OLLAMA_MODEL,
+        "stream":     False,
+        "messages":   [
+            {"role": "system", "content": system_prompt},
+            {"role": "user",   "content": f"Generate the image prompt for this slide:\n{user_content}"},
+        ],
+        "keep_alive": -1,
+        "options":    {"temperature": 0.4, "num_predict": 350},
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=180) as client:
+            resp = await client.post(f"{OLLAMA_URL}/api/chat", json=payload)
+            resp.raise_for_status()
+        content = (resp.json().get("message") or {}).get("content", "").strip()
+        # Validate: must be a meaningful prompt (>40 chars) and not JSON
+        if len(content) > 40 and not content.startswith("{"):
+            _log(f"[Pregen-A5] ✓ enhanced prompt: {len(content)} chars")
+            return content
+        _log(f"[Pregen-A5] LLM returned short/invalid output ({len(content)} chars) — using template")
+    except Exception as e:
+        _log(f"[Pregen-A5] Ollama prompt-enhance failed (non-fatal): {e}")
+
+    return _build_image_prompt(slide)  # silent fallback
+
 # ── Environment ────────────────────────────────────────────────────────────────
 VOXCPM_URL     = os.getenv("VOXCPM_URL",    "http://host.docker.internal:7861")
 VOXCPM_API_KEY = os.getenv("VOXCPM_API_KEY", "spassword")
@@ -436,10 +494,10 @@ async def _process_slide(idx: int, slide: dict, cache_id: str, language: str, su
     is_story       = slide.get("isStory", False)
     is_tips        = slide.get("isTips", False)
 
-    # ── Build a rich, context-aware image prompt from slide type ─────────────
-    # Uses _build_image_prompt() which picks style based on slide type
-    # (formula/biology/process/story/tips/summary/concept/default).
-    img_prompt = _build_image_prompt(slide)
+    # ── Build image prompt: use LLM-enhanced prompt (Phase A.5) if available ──
+    # enhanced_image_prompt is written by _enhance_image_prompt_llm() before
+    # Ollama is evicted. If absent (e.g. retry path), fall back to template.
+    img_prompt = slide.get("enhanced_image_prompt") or _build_image_prompt(slide)
 
     narration = slide.get("narration") or slide.get("content") or ""
 
@@ -1352,8 +1410,50 @@ async def run_pregen_batch(
              f"{_state.failed} failed")
 
         # ════════════════════════════════════════════════════════════════════
+        # PHASE A.5 — Image Prompt Enhancement (Ollama still in VRAM)
+        #   After all text slides are generated, call the LLM once per slide
+        #   to write a rich, rule-following image prompt (uses image_system_prompt.txt).
+        #   Saved into each slide as enhanced_image_prompt and persisted to DB.
+        #   Must run BEFORE prepare_for_media_generation() evicts Ollama.
+        # ════════════════════════════════════════════════════════════════════
+        _state.phase = "prompt_enhance"
+        _log("[Pregen] ══ Phase A.5: LLM image prompt enhancement (Ollama in VRAM) ══")
+
+        for row_dict in phase_a_rows:
+            if _state.stop_requested:
+                break
+            cache_id = str(row_dict["id"])
+            slides   = row_dict.get("presentation_slides") or []
+            if not slides:
+                continue
+
+            enhanced_any = False
+            for i, slide in enumerate(slides):
+                _state.current_step = f"img_prompt:{i+1}"
+                try:
+                    enhanced = await _enhance_image_prompt_llm(slide)
+                    slides[i]["enhanced_image_prompt"] = enhanced
+                    enhanced_any = True
+                    _log(f"[Pregen-A5] {cache_id[:8]} slide {i+1}/{len(slides)}: prompt ✓ ({len(enhanced)} chars)")
+                except Exception as e:
+                    _log(f"[Pregen-A5] {cache_id[:8]} slide {i+1}: failed (non-fatal): {e}")
+
+            if enhanced_any:
+                # Persist enhanced prompts to DB before VRAM switch
+                async with db_factory() as db:
+                    await db.execute(
+                        text("UPDATE teaching_qa_cache SET presentation_slides = CAST(:s AS jsonb) WHERE id = CAST(:id AS uuid)"),
+                        {"s": json.dumps(slides), "id": cache_id},
+                    )
+                    await db.commit()
+                row_dict["presentation_slides"] = slides
+                _log(f"[Pregen-A5] {cache_id[:8]}: enhanced prompts saved to DB ✓")
+
+        _log("[Pregen] Phase A.5 complete")
+
+        # ════════════════════════════════════════════════════════════════════
         # PHASE B — Media generation (Ollama EVICTED, Wan2GP + VoxCPM free)
-        #   Evict Ollama ONCE here, after ALL text is done.
+        #   Evict Ollama ONCE here, after ALL text AND prompt enhancement done.
         #   Then process each row's image + audio (parallel within row).
         # ════════════════════════════════════════════════════════════════════
         _state.phase = "media"
