@@ -559,66 +559,144 @@
         #ta-submitBtn:disabled { opacity: .5; cursor: not-allowed; }
 
         .ta-answer-card {
-            background: #fff;
-            border-radius: 14px;
-            box-shadow: 0 2px 16px rgba(0,0,0,.08);
-            padding: 24px;
+            background: linear-gradient(145deg, #0f0c29, #1a1a3e);
+            border: 1px solid rgba(99,102,241,0.3);
+            border-radius: 20px;
+            box-shadow: 0 8px 40px rgba(99,102,241,0.2);
+            padding: 28px;
             margin-bottom: 20px;
+            animation: taFadeIn 0.4s ease;
+        }
+        @keyframes taFadeIn {
+            from { opacity: 0; transform: translateY(12px); }
+            to   { opacity: 1; transform: translateY(0); }
         }
         .ta-answer-header {
             display: flex;
             align-items: center;
             justify-content: space-between;
-            margin-bottom: 16px;
+            margin-bottom: 20px;
             flex-wrap: wrap;
             gap: 8px;
+            padding-bottom: 16px;
+            border-bottom: 1px solid rgba(255,255,255,0.08);
         }
         .ta-answer-header h2 {
-            font-size: 17px;
+            font-size: 16px;
             font-weight: 700;
-            color: #1a1a2e;
+            color: #e0e7ff;
+            display: flex;
+            align-items: center;
+            gap: 8px;
         }
         .ta-cache-badge {
-            font-size: 12px;
+            font-size: 11px;
             font-weight: 600;
-            padding: 4px 10px;
+            padding: 4px 12px;
             border-radius: 20px;
         }
-        .ta-badge-cached { background: #dcfce7; color: #166534; }
-        .ta-badge-new    { background: #ede9fe; color: #5b21b6; }
-        .ta-badge-semi   { background: #e0f2fe; color: #0369a1; }
+        .ta-badge-cached { background: rgba(34,197,94,0.15); color: #4ade80; border: 1px solid rgba(34,197,94,0.3); }
+        .ta-badge-new    { background: rgba(139,92,246,0.2); color: #c4b5fd; border: 1px solid rgba(139,92,246,0.3); }
 
+        /* ── Answer body (markdown rendered) ── */
         .ta-answer-text {
             font-size: 15px;
-            line-height: 1.75;
-            color: #1a1a2e;
-            margin-bottom: 18px;
-            white-space: pre-wrap;
+            line-height: 1.85;
+            color: #d1d5db;
+            margin-bottom: 20px;
+        }
+        .ta-answer-text strong {
+            color: #a5b4fc;
+            font-weight: 700;
+        }
+        .ta-answer-text p {
+            margin-bottom: 12px;
+        }
+        .ta-answer-text ul {
+            margin: 8px 0 12px 20px;
+        }
+        .ta-answer-text li {
+            margin-bottom: 6px;
+            color: #c9d1e0;
+        }
+        .ta-answer-text blockquote {
+            border-left: 3px solid #6366f1;
+            padding-left: 14px;
+            margin: 12px 0;
+            color: #a5b4fc;
+            font-style: italic;
         }
 
+        /* ── Key points ── */
         .ta-key-points {
-            background: #f0fdf4;
-            border: 1px solid #bbf7d0;
-            border-radius: 10px;
-            padding: 14px 18px;
+            background: rgba(99,102,241,0.08);
+            border: 1px solid rgba(99,102,241,0.25);
+            border-radius: 12px;
+            padding: 16px 20px;
             margin-bottom: 16px;
         }
         .ta-key-points h4 {
-            font-size: 12px;
+            font-size: 11px;
             font-weight: 700;
             text-transform: uppercase;
-            letter-spacing: .5px;
-            color: #059669;
-            margin-bottom: 8px;
+            letter-spacing: 1px;
+            color: #818cf8;
+            margin-bottom: 10px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
         }
         .ta-key-points li {
             font-size: 14px;
-            color: #1a1a2e;
+            color: #c9d1e0;
             margin-left: 18px;
-            margin-bottom: 4px;
-            line-height: 1.5;
+            margin-bottom: 6px;
+            line-height: 1.6;
         }
 
+        /* ── Example box ── */
+        .ta-example-box {
+            background: rgba(16,185,129,0.07);
+            border: 1px solid rgba(16,185,129,0.25);
+            border-radius: 12px;
+            padding: 16px 20px;
+            margin-bottom: 16px;
+        }
+        .ta-example-box h4 {
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: #34d399;
+            margin-bottom: 8px;
+        }
+        .ta-example-box p {
+            font-size: 14px;
+            color: #a7f3d0;
+            line-height: 1.65;
+            margin: 0;
+        }
+
+        /* ── Quick tip box ── */
+        .ta-tip-box {
+            background: rgba(251,191,36,0.07);
+            border: 1px solid rgba(251,191,36,0.25);
+            border-radius: 12px;
+            padding: 14px 18px;
+            margin-bottom: 16px;
+            display: flex;
+            gap: 10px;
+            align-items: flex-start;
+        }
+        .ta-tip-box .tip-icon { font-size: 18px; flex-shrink: 0; margin-top: 1px; }
+        .ta-tip-box p {
+            font-size: 14px;
+            color: #fde68a;
+            line-height: 1.6;
+            margin: 0;
+        }
+
+        /* ── Sources ── */
         .ta-sources {
             display: flex;
             flex-wrap: wrap;
@@ -629,8 +707,9 @@
             font-size: 11px;
             padding: 3px 10px;
             border-radius: 20px;
-            background: #ede9fe;
-            color: #5b21b6;
+            background: rgba(99,102,241,0.1);
+            border: 1px solid rgba(99,102,241,0.2);
+            color: #a5b4fc;
             font-weight: 500;
         }
 
@@ -1399,23 +1478,35 @@
             }
         }
 
+        /* Simple markdown → HTML renderer for answer body */
+        function renderMarkdown(text) {
+            if (!text) return '';
+            let html = escHtml(text);
+            // Bold: **text**
+            html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+            // Blockquote: lines starting with &gt;
+            html = html.replace(/^&gt;\s?(.+)$/gm, '<blockquote>$1</blockquote>');
+            // Bullet list: lines starting with -
+            html = html.replace(/^[-•]\s+(.+)$/gm, '<li>$1</li>');
+            html = html.replace(/((?:<li>.*<\/li>\n?)+)/g, '<ul>$1</ul>');
+            // Paragraphs: double newlines
+            html = html.replace(/\n{2,}/g, '</p><p>');
+            html = html.replace(/\n/g, '<br>');
+            return '<p>' + html + '</p>';
+        }
+
         function renderTextAnswer(data) {
             const resultDiv = document.getElementById('ta-result');
 
             // Cache badge
             const layer = data.cache_layer || '';
-            let badgeClass = 'ta-badge-new', badgeText = '🆕 Freshly Generated';
+            let badgeClass = 'ta-badge-new', badgeText = '✨ Freshly Generated';
             if (layer.startsWith('L1') || layer.startsWith('L2')) {
                 badgeClass = 'ta-badge-cached'; badgeText = '⚡ From Cache';
-            } else if (layer.startsWith('L3')) {
-                badgeClass = 'ta-badge-semi'; badgeText = '🔗 Similar Match';
             }
 
-            // Sources pills
-            const sources = data.sources || [];
-            const sourceHtml = sources.map(s =>
-                `<span class="ta-source-pill">📄 ${escHtml(s.doc_title || '')}${s.section_title ? ' › ' + escHtml(s.section_title) : ''}</span>`
-            ).join('');
+            // Answer body with markdown rendering
+            const answerHtml = `<div class="ta-answer-text">${renderMarkdown(data.answer || '')}</div>`;
 
             // Key points
             const keyPoints = data.key_points || [];
@@ -1423,6 +1514,20 @@
                 <div class="ta-key-points">
                     <h4>📌 Key Points</h4>
                     <ul>${keyPoints.map(p => `<li>${escHtml(p)}</li>`).join('')}</ul>
+                </div>` : '';
+
+            // Example box (optional)
+            const exampleHtml = data.example ? `
+                <div class="ta-example-box">
+                    <h4>🌍 Real-World Example</h4>
+                    <p>${escHtml(data.example)}</p>
+                </div>` : '';
+
+            // Quick tip box (optional)
+            const tipHtml = data.quick_tip ? `
+                <div class="ta-tip-box">
+                    <span class="tip-icon">💡</span>
+                    <p><strong>Exam Tip:</strong> ${escHtml(data.quick_tip)}</p>
                 </div>` : '';
 
             // Slide preview button (only shown if slide data exists)
@@ -1450,7 +1555,7 @@
                    </div>`
                 : '';
 
-            // Suggestion chips (only questions with full slide data)
+            // Suggestion chips
             const suggestions = data.suggestions || [];
             const suggestHtml = suggestions.length ? `
                 <div class="ta-suggestions">
@@ -1467,12 +1572,13 @@
             resultDiv.innerHTML = `
                 <div class="ta-answer-card">
                     <div class="ta-answer-header">
-                        <h2>💬 Text Answer</h2>
+                        <h2>💬 Answer</h2>
                         <span class="ta-cache-badge ${badgeClass}">${badgeText}</span>
                     </div>
-                    <div class="ta-answer-text">${escHtml(data.answer || '')}</div>
+                    ${answerHtml}
                     ${kpHtml}
-                    ${sourceHtml ? `<div class="ta-sources">${sourceHtml}</div>` : ''}
+                    ${exampleHtml}
+                    ${tipHtml}
                     ${previewBtnHtml}
                     ${suggestHtml}
                 </div>`;

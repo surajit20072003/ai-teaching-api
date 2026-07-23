@@ -27,6 +27,7 @@ from routers.pregen import router as pregen_router
 from routers.questions import router as questions_router
 from routers.text_answer import router as text_answer_router
 from routers.admin_tiers import router as admin_tiers_router
+from routers.content import router as content_router
 
 
 # ─────────────────────────────────────────────────────────
@@ -98,6 +99,7 @@ app.include_router(pregen_router)
 app.include_router(questions_router)
 app.include_router(text_answer_router)
 app.include_router(admin_tiers_router)
+app.include_router(content_router)
 
 @app.on_event("startup")
 async def startup_event():
@@ -115,6 +117,11 @@ async def serve_frontend():
 async def serve_pregen_dashboard():
     """Pre-Generation monitoring & control dashboard."""
     return FileResponse("/app/pregen_dashboard.html", media_type="text/html")
+
+@app.get("/content-browser", include_in_schema=False)
+async def serve_content_browser():
+    """Content Library Browser."""
+    return FileResponse("/app/content_browser.html", media_type="text/html")
 
 @app.get("/health")
 async def health():
@@ -580,18 +587,38 @@ async def teaching_assistant(request: Request, body: dict, db: AsyncSession = De
     if cached:
         if cached.get("access_tier", "free") == "pro" and user_tier == "free":
             return _SUBSCRIBE_RESPONSE
-        await increment_usage(q_hash, subject_id)
-        return {**cached, "cached": True, "cache_layer": "L1_redis"}
+        l1_slides = cached.get("presentationSlides") or []
+        l1_complete = bool(l1_slides) and all(
+            s.get("infographicUrl", "").startswith("http")
+            and s.get("audioUrl", "").startswith("http")
+            for s in l1_slides
+        )
+        if l1_complete:
+            await increment_usage(q_hash, subject_id)
+            return {**cached, "cached": True, "cache_layer": "L1_redis"}
+        else:
+            from core.cache import get_redis as _get_redis
+            await _get_redis().delete(f"teaching:{q_hash}:{subject_id}")
+            print(f"[L1] STALE — evicted incomplete cache (slides={len(l1_slides)}) → falling to generation")
 
     # [L2] Local disk JSON (~1ms, avoids DB round-trip)
     local_cached = await read_slide_cache(subject_id, q_hash)
     if local_cached:
         tier_in_cache = local_cached.get("access_tier", "free")
-        print(f"[L2] HIT | cache_tier={tier_in_cache} | user_tier={user_tier}")
-        if tier_in_cache == "pro" and user_tier == "free":
-            print(f"[L2] BLOCKED — pro content, free user")
-            return _SUBSCRIBE_RESPONSE
-        return {**local_cached, "cached": True, "cache_layer": "L2_local_disk"}
+        l2_slides = local_cached.get("presentationSlides") or []
+        l2_complete = bool(l2_slides) and all(
+            s.get("infographicUrl", "").startswith("http")
+            and s.get("audioUrl", "").startswith("http")
+            for s in l2_slides
+        )
+        if not l2_complete:
+            print(f"[L2] STALE — incomplete disk cache (slides={len(l2_slides)}) → falling to generation")
+        else:
+            print(f"[L2] HIT | cache_tier={tier_in_cache} | user_tier={user_tier}")
+            if tier_in_cache == "pro" and user_tier == "free":
+                print(f"[L2] BLOCKED — pro content, free user")
+                return _SUBSCRIBE_RESPONSE
+            return {**local_cached, "cached": True, "cache_layer": "L2_local_disk"}
 
     # [L3] Postgres exact hash (~3ms)
     # Apply tier filter at SQL level — safest approach, no post-fetch leaks
@@ -610,27 +637,50 @@ async def teaching_assistant(request: Request, body: dict, db: AsyncSession = De
     )).scalar_one_or_none()
 
 
-    if row and row.presentation_slides:
-        print(f"[L3] HIT | cache_tier={row.access_tier} | user_tier={user_tier}")
-        if row.access_tier == "pro" and user_tier == "free":
-            print(f"[L3] BLOCKED — pro content, free user")
-            return _SUBSCRIBE_RESPONSE
-        data = {
-            "cached": True, "cache_layer": "L3_postgres",
-            "cache_id": str(row.id),
-            "presentationSlides": row.presentation_slides,
-            "latexFormulas": row.latex_formulas,
-            "slideAudioUrls": row.slide_audio_urls.get("urls", []) if row.slide_audio_urls else [],
-            "totalDurationSeconds": row.total_duration_seconds,
-            "manimVideoUrls": row.manim_video_urls or {},
-            "imageUrls": row.image_urls or {},
-            "access_tier": row.access_tier,
-        }
-        print(f"[L3] SERVING to {user_tier} user")
-        await set_to_cache(q_hash, subject_id, data)
-        await write_slide_cache(subject_id, q_hash, data)
-        await sync_cache_row_to_local(subject_id, str(row.id), data, language, db)
-        return data
+    # Helper: every slide must have both a valid image URL and a valid audio URL
+    def _slides_complete(slides: list) -> bool:
+        if not slides:
+            return False
+        return all(
+            s.get("infographicUrl", "").startswith("http")
+            and s.get("audioUrl", "").startswith("http")
+            for s in slides
+        )
+
+    if row and row.presentation_slides and row.pregen_status == "done":
+        slides = row.presentation_slides or []
+        if _slides_complete(slides):
+            print(f"[L3] HIT | cache_tier={row.access_tier} | user_tier={user_tier} | slides={len(slides)} complete")
+            if row.access_tier == "pro" and user_tier == "free":
+                print(f"[L3] BLOCKED — pro content, free user")
+                return _SUBSCRIBE_RESPONSE
+            data = {
+                "cached": True, "cache_layer": "L3_postgres",
+                "cache_id": str(row.id),
+                "presentationSlides": slides,
+                "latexFormulas": row.latex_formulas,
+                "slideAudioUrls": row.slide_audio_urls.get("urls", []) if row.slide_audio_urls else [],
+                "totalDurationSeconds": row.total_duration_seconds,
+                "manimVideoUrls": row.manim_video_urls or {},
+                "imageUrls": row.image_urls or {},
+                "access_tier": row.access_tier,
+            }
+            print(f"[L3] SERVING to {user_tier} user")
+            await set_to_cache(q_hash, subject_id, data)
+            await write_slide_cache(subject_id, q_hash, data)
+            # Fire-and-forget background sync — never block or crash the student response
+            asyncio.create_task(sync_cache_row_to_local(subject_id, str(row.id), data, language, db))
+            return data
+        else:
+            missing = [(i, s.get("infographicUrl","")[:30], s.get("audioUrl","")[:30])
+                       for i, s in enumerate(slides)
+                       if not s.get("infographicUrl","").startswith("http")
+                       or not s.get("audioUrl","").startswith("http")]
+            print(f"[L3] INCOMPLETE — {len(missing)} slide(s) missing image/audio → falling to real-time generation")
+            for idx, img, audio in missing:
+                print(f"[L3]   slide {idx}: img={img!r} audio={audio!r}")
+    elif row:
+        print(f"[L3] ROW EXISTS but pregen_status={row.pregen_status} → falling to real-time generation")
     print(f"[L3] ✗ MISS")
 
     # ── Distributed lock: prevent concurrent stampede for the same question ──
@@ -668,7 +718,10 @@ async def teaching_assistant(request: Request, body: dict, db: AsyncSession = De
             FROM teaching_qa_cache
             WHERE question_embedding IS NOT NULL
               AND subject_id = :subj
-              AND presentation_slides IS NOT NULL
+              AND pregen_status = 'done'
+              AND jsonb_array_length(COALESCE(presentation_slides, '[]'::jsonb)) > 0
+              AND presentation_slides->0->>'infographicUrl' LIKE 'http%'
+              AND presentation_slides->0->>'audioUrl' LIKE 'http%'
               AND 1 - (question_embedding <=> CAST(:vec AS vector)) > 0.70
               {tier_cache_filter}
             ORDER BY sim_score DESC LIMIT 5
@@ -707,13 +760,31 @@ async def teaching_assistant(request: Request, body: dict, db: AsyncSession = De
                 print(f"[L4] ✓ LLM Judge selected a cache hit")
                 data = winner["answer_data"]
                 data["matched_question"] = winner["question"]
-                # DO NOT write to L1/L2 cache — L4 is a semantic match, not exact.
-                # Writing here poisons the cache: Question B's hash gets Question A's slides permanently.
-                # Background sync only: fire-and-forget
-                asyncio.create_task(
-                    sync_cache_row_to_local(subject_id, data["cache_id"], data, language, db)
+
+                # Final completeness guard — every slide must have image + audio
+                winner_slides = data.get("presentationSlides") or []
+                winner_complete = bool(winner_slides) and all(
+                    s.get("infographicUrl", "").startswith("http")
+                    and s.get("audioUrl", "").startswith("http")
+                    for s in winner_slides
                 )
-                return data
+
+                if not winner_complete:
+                    missing_count = sum(
+                        1 for s in winner_slides
+                        if not s.get("infographicUrl", "").startswith("http")
+                        or not s.get("audioUrl", "").startswith("http")
+                    )
+                    print(f"[L4] ✗ Winner incomplete — {missing_count}/{len(winner_slides)} slides missing image/audio → falling to real-time generation")
+                    # Don't sync or return; fall through to generation below
+                else:
+                    print(f"[L4] ✓ LLM Judge selected a cache hit — all {len(winner_slides)} slides complete")
+                    # DO NOT write to L1/L2 cache — L4 is a semantic match, not exact.
+                    # Writing here poisons the cache: Question B's hash gets Question A's slides permanently.
+                    asyncio.create_task(
+                        sync_cache_row_to_local(subject_id, data["cache_id"], data, language, db)
+                    )
+                    return data
             print(f"[L4] LLM Judge said NEW — no close match")
         else:
             print(f"[L4] ✗ No semantic candidates above 0.60 threshold")
@@ -913,9 +984,55 @@ async def teaching_assistant(request: Request, body: dict, db: AsyncSession = De
                 "imageUrls": existing.image_urls or {},
                 "access_tier": existing.access_tier,
             }
-            await set_to_cache(q_hash, subject_id, result_data)
-            await release_lock(q_hash, subject_id)
-            return result_data
+            # Only cache in Redis and return if the existing row is actually complete
+            recovered_slides = existing.presentation_slides or []
+            recovery_complete = bool(recovered_slides) and all(
+                s.get("infographicUrl", "").startswith("http")
+                and s.get("audioUrl", "").startswith("http")
+                for s in recovered_slides
+            )
+            if recovery_complete:
+                await set_to_cache(q_hash, subject_id, result_data)
+                await release_lock(q_hash, subject_id)
+                return result_data
+            else:
+                # Existing row is incomplete (pending/zombie) — return the freshly generated slides
+                print(f"[DB] Race recovery: existing row incomplete ({len(recovered_slides)} slides) — returning fresh generated result")
+                # Try to UPDATE the zombie row with our freshly generated data so future requests don't re-generate
+                try:
+                    from sqlalchemy import update as sa_update
+                    await db.execute(
+                        sa_update(TeachingCache)
+                        .where(TeachingCache.question_hash == q_hash)
+                        .where(TeachingCache.subject_id == subject_id)
+                        .values(
+                            presentation_slides=slides,
+                            slide_audio_urls={"urls": audios},
+                            image_urls={str(i): s.get("infographicUrl", "") for i, s in enumerate(slides)},
+                            total_duration_seconds=total_duration,
+                            pregen_status="done",
+                        )
+                    )
+                    await db.commit()
+                    print(f"[DB] Updated zombie row with fresh slides for hash={q_hash[:8]}…")
+                except Exception as upd_err:
+                    print(f"[DB] Failed to update zombie row: {upd_err}")
+                fresh_data = {
+                    "cached": False, "cache_layer": "GENERATED",
+                    "cache_id": str(existing.id),
+                    "isDocGrounded": is_doc_grounded,
+                    "presentationSlides": slides,
+                    "latexFormulas": slides_data.get("latex_formulas", []),
+                    "keyPoints": slides_data.get("key_points", []),
+                    "followUpQuestions": slides_data.get("follow_up_questions", []),
+                    "slideAudioUrls": audios,
+                    "totalDurationSeconds": total_duration,
+                    "manimVideoUrls": {}, "imageUrls": {},
+                    "access_tier": cache_tier,
+                }
+                await set_to_cache(q_hash, subject_id, fresh_data)
+                await release_lock(q_hash, subject_id)
+                return fresh_data
         # If we can't find the row either (extremely unlikely), just return what we generated
         print(f"[DB] Could not recover existing row — returning in-memory result")
         await release_lock(q_hash, subject_id)

@@ -195,4 +195,6 @@ async def sync_cache_row_to_local(
 
     if tasks:
         # Run in background — don't block student response
-        asyncio.create_task(asyncio.gather(*tasks, return_exceptions=True))
+        async def _run_sync():
+            await asyncio.gather(*tasks, return_exceptions=True)
+        asyncio.create_task(_run_sync())

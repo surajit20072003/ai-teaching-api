@@ -1,0 +1,744 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Content Library Browser — AI Teaching API</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap');
+
+    :root {
+      --bg:        #0a0d14;
+      --bg2:       #0f1320;
+      --bg3:       #141926;
+      --border:    rgba(255,255,255,0.07);
+      --accent:    #6c63ff;
+      --accent-hover: #5a52d5;
+      --accent2:   #00d4aa;
+      --danger:    #ff4d6d;
+      --warn:      #ffa94d;
+      --text:      #e8eaf0;
+      --muted:     #6b7280;
+      --radius:    8px;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Inter', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      height: 100vh;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ── Header ───────────────────────────────────────── */
+    header {
+      height: 60px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      padding: 0 20px;
+      background: var(--bg2);
+      flex-shrink: 0;
+      justify-content: space-between;
+    }
+
+    header h1 {
+      font-size: 18px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    header h1 span {
+      font-size: 24px;
+    }
+
+    .api-config {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .api-config input {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 6px 12px;
+      border-radius: var(--radius);
+      font-size: 12px;
+      width: 250px;
+    }
+
+    /* ── Main Layout ──────────────────────────────────── */
+    .container {
+      display: flex;
+      flex: 1;
+      overflow: hidden;
+    }
+
+    /* ── Panel: Subjects ──────────────────────────────── */
+    .panel-subjects {
+      width: 280px;
+      border-right: 1px solid var(--border);
+      background: var(--bg2);
+      display: flex;
+      flex-direction: column;
+      flex-shrink: 0;
+    }
+    .panel-header {
+      padding: 15px;
+      border-bottom: 1px solid var(--border);
+      font-weight: 600;
+      font-size: 14px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--muted);
+    }
+    .panel-body {
+      flex: 1;
+      overflow-y: auto;
+      padding: 10px 0;
+    }
+
+    .subject-item {
+      padding: 10px 15px;
+      cursor: pointer;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      transition: background 0.2s;
+    }
+    .subject-item:hover { background: var(--bg3); }
+    .subject-name { font-weight: 500; font-size: 14px; }
+    .subject-badge {
+      background: rgba(255,255,255,0.1);
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 11px;
+    }
+
+    .chapter-list {
+      display: none;
+      background: rgba(0,0,0,0.2);
+      padding: 5px 0;
+    }
+    .subject-item.expanded + .chapter-list {
+      display: block;
+    }
+    .chapter-item {
+      padding: 8px 15px 8px 30px;
+      cursor: pointer;
+      font-size: 13px;
+      color: var(--muted);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .chapter-item:hover {
+      color: var(--text);
+      background: var(--bg3);
+    }
+    .chapter-item.active {
+      color: var(--accent2);
+      background: rgba(0, 212, 170, 0.1);
+      border-left: 2px solid var(--accent2);
+    }
+    .chapter-badge {
+      background: rgba(255,255,255,0.05);
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 11px;
+    }
+
+    /* ── Panel: Questions ─────────────────────────────── */
+    .panel-questions {
+      width: 380px;
+      border-right: 1px solid var(--border);
+      background: var(--bg);
+      display: flex;
+      flex-direction: column;
+      flex-shrink: 0;
+    }
+    .search-box {
+      padding: 10px;
+      border-bottom: 1px solid var(--border);
+    }
+    .search-box input {
+      width: 100%;
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 8px 12px;
+      border-radius: var(--radius);
+      font-size: 13px;
+    }
+
+    .question-item {
+      padding: 15px;
+      border-bottom: 1px solid var(--border);
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    .question-item:hover { background: var(--bg2); }
+    .question-item.active {
+      background: rgba(108, 99, 255, 0.1);
+      border-left: 3px solid var(--accent);
+    }
+    .question-text {
+      font-size: 13px;
+      line-height: 1.4;
+      margin-bottom: 10px;
+      display: -webkit-box;
+      -webkit-line-clamp: 3;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+    .question-badges {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+    .badge {
+      font-size: 10px;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-weight: 600;
+      text-transform: uppercase;
+    }
+    .badge-tier-free { background: rgba(0, 212, 170, 0.15); color: var(--accent2); }
+    .badge-tier-pro  { background: rgba(255, 169, 77, 0.15); color: var(--warn); }
+    .badge-img   { background: rgba(255, 255, 255, 0.1); color: #ccc; }
+    .badge-audio { background: rgba(108, 99, 255, 0.15); color: #a49eff; }
+    .badge-manim { background: rgba(255, 77, 109, 0.15); color: var(--danger); }
+
+    /* ── Panel: Slide Viewer ──────────────────────────── */
+    .panel-viewer {
+      flex: 1;
+      background: var(--bg);
+      display: flex;
+      flex-direction: column;
+      position: relative;
+    }
+    
+    .viewer-empty {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--muted);
+      font-size: 16px;
+    }
+
+    .viewer-content {
+      display: none;
+      flex: 1;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .viewer-content.active {
+      display: flex;
+    }
+
+    .viewer-top {
+      padding: 20px;
+      border-bottom: 1px solid var(--border);
+      background: var(--bg2);
+    }
+    .viewer-question {
+      font-size: 16px;
+      font-weight: 500;
+      line-height: 1.4;
+      margin-bottom: 10px;
+    }
+
+    .viewer-main {
+      flex: 1;
+      display: flex;
+      overflow: hidden;
+    }
+
+    /* Left side: Media */
+    .viewer-media-panel {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      border-right: 1px solid var(--border);
+      position: relative;
+    }
+    .media-container {
+      flex: 1;
+      background: #000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+      overflow: hidden;
+    }
+    .media-container img, .media-container video {
+      max-width: 100%;
+      max-height: 100%;
+      object-fit: contain;
+    }
+    
+    /* Media Toggle */
+    .media-toggle {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      background: rgba(0,0,0,0.6);
+      border-radius: var(--radius);
+      padding: 4px;
+      display: flex;
+      gap: 4px;
+      z-index: 10;
+    }
+    .media-btn {
+      background: transparent;
+      border: none;
+      color: #aaa;
+      padding: 6px 12px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .media-btn.active {
+      background: var(--accent);
+      color: white;
+    }
+    .media-btn:not(.active):hover {
+      background: rgba(255,255,255,0.1);
+    }
+
+    .audio-player {
+      padding: 15px;
+      background: var(--bg2);
+      border-top: 1px solid var(--border);
+    }
+    .audio-player audio {
+      width: 100%;
+      height: 40px;
+      outline: none;
+    }
+
+    /* Right side: Narration */
+    .viewer-text-panel {
+      width: 350px;
+      background: var(--bg2);
+      display: flex;
+      flex-direction: column;
+    }
+    .narration-box {
+      flex: 1;
+      padding: 20px;
+      overflow-y: auto;
+      font-size: 14px;
+      line-height: 1.6;
+      color: #ccc;
+    }
+    .narration-box strong { color: white; }
+
+    /* Slide Controls */
+    .slide-controls {
+      height: 60px;
+      border-top: 1px solid var(--border);
+      background: var(--bg);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 20px;
+    }
+    .btn {
+      background: var(--bg3);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 8px 16px;
+      border-radius: var(--radius);
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 500;
+      transition: all 0.2s;
+    }
+    .btn:hover:not(:disabled) { background: var(--accent); border-color: var(--accent); }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    
+    .slide-counter {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    /* Loader */
+    .loader {
+      display: none;
+      margin: 20px auto;
+      border: 3px solid rgba(255,255,255,0.1);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      width: 24px;
+      height: 24px;
+      animation: spin 1s linear infinite;
+    }
+    @keyframes spin { 100% { transform: rotate(360deg); } }
+
+  </style>
+</head>
+<body>
+
+  <!-- ── Header ───────────────────────────────────────── -->
+  <header>
+    <h1><span>📚</span> Content Library Browser</h1>
+    <div class="api-config">
+      <span style="font-size:12px;color:var(--muted)">API Base:</span>
+      <input type="text" id="apiBase" value="" onchange="loadSubjects()" placeholder="http://localhost:8000">
+    </div>
+  </header>
+
+  <div class="container">
+    
+    <!-- ── Panel 1: Subjects ──────────────────────────── -->
+    <div class="panel-subjects">
+      <div class="panel-header" id="subjectsTotal">Subjects</div>
+      <div class="panel-body" id="subjectList">
+        <div class="loader" id="subjectLoader"></div>
+        <!-- Subjects injected here -->
+      </div>
+    </div>
+
+    <!-- ── Panel 2: Questions ─────────────────────────── -->
+    <div class="panel-questions">
+      <div class="panel-header" id="questionsHeader">Questions</div>
+      <div class="search-box">
+        <input type="text" id="questionSearch" placeholder="Search questions..." oninput="filterQuestions()">
+      </div>
+      <div class="panel-body" id="questionList">
+        <div style="padding:20px;text-align:center;color:var(--muted);font-size:13px;">Select a chapter to view questions</div>
+      </div>
+    </div>
+
+    <!-- ── Panel 3: Viewer ────────────────────────────── -->
+    <div class="panel-viewer">
+      <div class="viewer-empty" id="viewerEmpty">
+        Select a question to view slides
+      </div>
+      
+      <div class="viewer-content" id="viewerContent">
+        <div class="viewer-top">
+          <div class="viewer-question" id="vqText"></div>
+          <div class="question-badges" id="vqBadges"></div>
+        </div>
+
+        <div class="viewer-main">
+          
+          <div class="viewer-media-panel">
+            <div class="media-toggle" id="mediaToggle" style="display:none;">
+              <button class="media-btn active" onclick="switchMedia('image')" id="btnImg">Image</button>
+              <button class="media-btn" onclick="switchMedia('video')" id="btnVid">Manim</button>
+            </div>
+            <div class="media-container" id="mediaContainer">
+              <img id="slideImg" src="" style="display:none;">
+              <video id="slideVid" controls style="display:none;"></video>
+            </div>
+            <div class="audio-player">
+              <audio id="slideAudio" controls></audio>
+            </div>
+          </div>
+
+          <div class="viewer-text-panel">
+            <div class="panel-header">Narration Script</div>
+            <div class="narration-box" id="narrationBox"></div>
+          </div>
+
+        </div>
+
+        <div class="slide-controls">
+          <button class="btn" id="btnPrev" onclick="prevSlide()">◀ Previous Slide</button>
+          <div class="slide-counter" id="slideCounter">Slide 0 / 0</div>
+          <button class="btn" id="btnNext" onclick="nextSlide()">Next Slide ▶</button>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <script>
+    // ── API Setup ────────────────────────────────────────────────────────────
+    function autoDetectBase() {
+      const input = document.getElementById('apiBase');
+      if (!input.value) {
+        const loc = window.location;
+        if (loc.protocol !== 'file:') {
+          input.value = `${loc.protocol}//${loc.hostname}:${loc.port || 8000}`;
+        } else {
+          input.value = 'http://localhost:8000';
+        }
+      }
+    }
+    const API = () => document.getElementById('apiBase').value.replace(/\/$/, '');
+
+    // ── State ────────────────────────────────────────────────────────────────
+    let currentQuestions = [];
+    let currentSlideData = null;
+    let currentSlideIdx = 0;
+    let activeChapterId = null;
+
+    // ── Load Subjects ────────────────────────────────────────────────────────
+    async function loadSubjects() {
+      autoDetectBase();
+      const list = document.getElementById('subjectList');
+      const loader = document.getElementById('subjectLoader');
+      loader.style.display = 'block';
+      list.innerHTML = '';
+      list.appendChild(loader);
+
+      try {
+        const r = await fetch(`${API()}/content/subjects`);
+        const subjects = await r.json();
+        
+        loader.style.display = 'none';
+        
+        let totalDone = 0;
+        subjects.forEach(s => totalDone += s.questions_done);
+        document.getElementById('subjectsTotal').textContent = `Subjects (${totalDone} done)`;
+
+        subjects.forEach(s => {
+          if (s.questions_total === 0) return; // Hide empty
+          
+          const wrap = document.createElement('div');
+          
+          const sItem = document.createElement('div');
+          sItem.className = 'subject-item';
+          sItem.innerHTML = `
+            <div class="subject-name">▶ ${s.name}</div>
+            <div class="subject-badge">${s.questions_done}/${s.questions_total}</div>
+          `;
+          
+          const cList = document.createElement('div');
+          cList.className = 'chapter-list';
+          
+          sItem.onclick = async () => {
+            sItem.classList.toggle('expanded');
+            if (sItem.classList.contains('expanded') && cList.children.length === 0) {
+              await loadChapters(s.subject_id, cList);
+            }
+          };
+
+          wrap.appendChild(sItem);
+          wrap.appendChild(cList);
+          list.appendChild(wrap);
+        });
+
+      } catch (e) {
+        loader.style.display = 'none';
+        list.innerHTML = `<div style="padding:15px;color:var(--danger)">Error connecting to API.</div>`;
+      }
+    }
+
+    // ── Load Chapters ────────────────────────────────────────────────────────
+    async function loadChapters(subjectId, container) {
+      container.innerHTML = `<div style="padding:10px 30px;font-size:12px;color:#888;">Loading...</div>`;
+      try {
+        const r = await fetch(`${API()}/content/subjects/${subjectId}/chapters`);
+        const chapters = await r.json();
+        container.innerHTML = '';
+        
+        chapters.forEach(c => {
+          const cItem = document.createElement('div');
+          cItem.className = 'chapter-item';
+          cItem.innerHTML = `
+            <div>Ch ${c.chapter_number}: ${c.title.substring(0, 25)}${c.title.length>25?'...':''}</div>
+            <div class="chapter-badge">${c.questions_done} done</div>
+          `;
+          cItem.onclick = () => {
+            document.querySelectorAll('.chapter-item').forEach(el => el.classList.remove('active'));
+            cItem.classList.add('active');
+            activeChapterId = c.chapter_id;
+            loadQuestions(c.chapter_id, `Ch ${c.chapter_number}: ${c.title}`);
+          };
+          container.appendChild(cItem);
+        });
+      } catch (e) {
+        container.innerHTML = `<div style="padding:10px 30px;color:var(--danger)">Failed to load chapters</div>`;
+      }
+    }
+
+    // ── Load Questions ───────────────────────────────────────────────────────
+    async function loadQuestions(chapterId, title) {
+      const list = document.getElementById('questionList');
+      document.getElementById('questionsHeader').textContent = title;
+      list.innerHTML = `<div class="loader" style="display:block"></div>`;
+      document.getElementById('questionSearch').value = '';
+      
+      try {
+        const r = await fetch(`${API()}/content/chapters/${chapterId}/questions?limit=500`);
+        const data = await r.json();
+        currentQuestions = data.questions;
+        renderQuestions(currentQuestions);
+      } catch (e) {
+        list.innerHTML = `<div style="padding:20px;color:var(--danger)">Error loading questions.</div>`;
+      }
+    }
+
+    function renderQuestions(questions) {
+      const list = document.getElementById('questionList');
+      list.innerHTML = '';
+      
+      if (questions.length === 0) {
+        list.innerHTML = `<div style="padding:20px;color:var(--muted)">No completed questions found.</div>`;
+        return;
+      }
+
+      questions.forEach((q, idx) => {
+        const item = document.createElement('div');
+        item.className = 'question-item';
+        item.dataset.id = q.cache_id;
+        
+        let badges = `
+          <div class="badge badge-tier-${q.access_tier}">${q.access_tier}</div>
+          <div class="badge badge-img">📸 ${q.slide_count} Slides</div>
+        `;
+        if (q.has_manim) badges += `<div class="badge badge-manim">🎬 Manim</div>`;
+        
+        item.innerHTML = `
+          <div class="question-text">${idx+1}. ${q.question_text}</div>
+          <div class="question-badges">${badges}</div>
+        `;
+        
+        item.onclick = () => {
+          document.querySelectorAll('.question-item').forEach(el => el.classList.remove('active'));
+          item.classList.add('active');
+          loadSlideData(q.cache_id);
+        };
+        list.appendChild(item);
+      });
+    }
+
+    function filterQuestions() {
+      const q = document.getElementById('questionSearch').value.toLowerCase();
+      const filtered = currentQuestions.filter(x => x.question_text.toLowerCase().includes(q));
+      renderQuestions(filtered);
+    }
+
+    // ── Load Slide Data ──────────────────────────────────────────────────────
+    async function loadSlideData(cacheId) {
+      document.getElementById('viewerEmpty').style.display = 'flex';
+      document.getElementById('viewerEmpty').innerHTML = `<div class="loader" style="display:block"></div>`;
+      document.getElementById('viewerContent').classList.remove('active');
+      
+      try {
+        const r = await fetch(`${API()}/content/questions/${cacheId}/slides`);
+        currentSlideData = await r.json();
+        
+        document.getElementById('viewerEmpty').style.display = 'none';
+        document.getElementById('viewerContent').classList.add('active');
+        
+        document.getElementById('vqText').textContent = currentSlideData.question_text;
+        
+        let badges = `<div class="badge badge-tier-${currentSlideData.access_tier}">${currentSlideData.access_tier}</div>`;
+        const manimCount = Object.keys(currentSlideData.manimVideoUrls || {}).length;
+        if (manimCount > 0) badges += `<div class="badge badge-manim">🎬 ${manimCount} Manim Video(s)</div>`;
+        document.getElementById('vqBadges').innerHTML = badges;
+        
+        currentSlideIdx = 0;
+        renderCurrentSlide();
+        
+      } catch (e) {
+        document.getElementById('viewerEmpty').innerHTML = `<div style="color:var(--danger)">Failed to load slide data.</div>`;
+      }
+    }
+
+    // ── Render Slide ─────────────────────────────────────────────────────────
+    function renderCurrentSlide() {
+      if (!currentSlideData || !currentSlideData.presentationSlides) return;
+      
+      const slide = currentSlideData.presentationSlides[currentSlideIdx];
+      const total = currentSlideData.slide_count;
+      
+      document.getElementById('slideCounter').textContent = `Slide ${currentSlideIdx + 1} / ${total}`;
+      document.getElementById('btnPrev').disabled = currentSlideIdx === 0;
+      document.getElementById('btnNext').disabled = currentSlideIdx === total - 1;
+
+      // Text
+      let html = slide.narration.replace(/\\n/g, '<br/>');
+      document.getElementById('narrationBox').innerHTML = html;
+
+      // Audio
+      const audioEl = document.getElementById('slideAudio');
+      if (slide.audioUrl) {
+        audioEl.src = slide.audioUrl;
+      } else {
+        audioEl.src = '';
+      }
+
+      // Media (Image vs Manim)
+      const imgEl = document.getElementById('slideImg');
+      const vidEl = document.getElementById('slideVid');
+      const toggle = document.getElementById('mediaToggle');
+      
+      imgEl.style.display = 'none';
+      vidEl.style.display = 'none';
+      vidEl.pause();
+      
+      if (slide.manimVideoUrl) {
+        toggle.style.display = 'flex';
+        // Default to Manim if available
+        switchMedia('video');
+        vidEl.src = slide.manimVideoUrl;
+        imgEl.src = slide.infographicUrl || '';
+      } else {
+        toggle.style.display = 'none';
+        imgEl.style.display = 'block';
+        imgEl.src = slide.infographicUrl || '';
+      }
+    }
+
+    function switchMedia(type) {
+      const imgEl = document.getElementById('slideImg');
+      const vidEl = document.getElementById('slideVid');
+      document.getElementById('btnImg').classList.remove('active');
+      document.getElementById('btnVid').classList.remove('active');
+      
+      if (type === 'image') {
+        imgEl.style.display = 'block';
+        vidEl.style.display = 'none';
+        vidEl.pause();
+        document.getElementById('btnImg').classList.add('active');
+      } else {
+        imgEl.style.display = 'none';
+        vidEl.style.display = 'block';
+        document.getElementById('btnVid').classList.add('active');
+      }
+    }
+
+    function prevSlide() {
+      if (currentSlideIdx > 0) {
+        currentSlideIdx--;
+        renderCurrentSlide();
+      }
+    }
+    
+    function nextSlide() {
+      if (currentSlideIdx < currentSlideData.slide_count - 1) {
+        currentSlideIdx++;
+        renderCurrentSlide();
+      }
+    }
+
+    // Keybindings for slide navigation
+    document.addEventListener('keydown', (e) => {
+      if (!currentSlideData) return;
+      if (e.key === 'ArrowLeft') prevSlide();
+      if (e.key === 'ArrowRight') nextSlide();
+    });
+
+    // Init
+    autoDetectBase();
+    loadSubjects();
+
+  </script>
+</body>
+</html>

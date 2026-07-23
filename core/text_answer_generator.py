@@ -1,19 +1,16 @@
 """
 core/text_answer_generator.py
 ─────────────────────────────
-Generates a concise, RAG-grounded text answer using OpenRouter FREE models.
+Generates a rich, educational text answer using OpenRouter FREE models.
+
+Strategy:
+  - Course material is used as the PRIMARY source of facts/concepts
+  - LLM enriches with natural language explanations (no "according to the document" citations)
+  - Output is beautifully structured markdown with optional example + quick_tip fields
+
 Cost: $0.00 — all models below have prompt_price = 0.
-
-Priority:
-  1. nvidia/nemotron-3-super-120b-a12b:free   (120B, 1M ctx, best quality)
-  2. meta-llama/llama-3.3-70b-instruct:free   (70B, reliable JSON output)
-  3. qwen/qwen3-coder:free                    (1M ctx, excellent JSON)
-  4. nvidia/nemotron-3-nano-30b-a3b:free      (30B, fastest)
-  5. openrouter/free                          (last resort auto-pick)
-
-If all fail → raises RuntimeError (caller returns 503).
 """
-import os, json, httpx
+import os, json, re, httpx
 
 OPENROUTER_BASE = "https://openrouter.ai/api/v1"
 OPENROUTER_KEY  = os.getenv("OPENROUTER_API_KEY", "")
@@ -24,46 +21,58 @@ FREE_MODELS = [
     "meta-llama/llama-3.3-70b-instruct:free",
     "qwen/qwen3-coder:free",
     "nvidia/nemotron-3-nano-30b-a3b:free",
-    "openrouter/free",
+    "openrouter/auto",
 ]
 
-SYSTEM_PROMPT = (
-    "You are Professor AI, an expert teacher. "
-    "Answer the student's question STRICTLY based only on the provided document context. "
-    "If the context does not contain enough information, say so honestly. "
-    "Never hallucinate or invent facts."
-)
+SYSTEM_PROMPT = """\
+You are Professor AI — a brilliant, friendly teacher who makes complex topics simple and exciting.
+
+You have access to course material for reference. Use it as your PRIMARY source of facts.
+Then explain naturally and confidently, like a real teacher in a classroom — NOT like reading from a book.
+
+STRICT RULES:
+- NEVER say "according to the document", "the text states", "the material mentions" or any similar citation phrasing
+- Write confidently and naturally, as if YOU know this topic deeply
+- Use simple language suitable for a 15–16 year old student
+- Use **bold** to highlight key terms and concepts
+- Use short paragraphs and `-` bullet points for clarity
+- Keep answers focused, accurate, and educational
+- Only add an example if it genuinely helps understanding
+- Only add a quick_tip if it's a genuinely useful exam/memory trick
+"""
 
 USER_PROMPT_TEMPLATE = """\
 A student asked: "{question}"
 
-Here is relevant content from the official course material:
---- BEGIN DOCUMENT CONTEXT ---
+Here is relevant course material for reference:
 {context}
---- END DOCUMENT CONTEXT ---
 
-Generate a clear, concise answer based ONLY on the above document content.
-Reply ONLY with valid JSON. Do NOT copy the placeholder text below, you must write the actual answer!
-{{"answer": "Write the actual full explanation here (200-300 words, simple language)", "key_points": ["Write actual key point 1 here", "Write actual key point 2 here"]}}"""
+Write a beautiful, teacher-quality answer. Respond ONLY with valid JSON in exactly this format:
+{{
+  "answer": "Your clear explanation here (150–250 words). Use **bold** for key terms. Write in paragraphs.",
+  "key_points": ["Concise fact 1", "Concise fact 2", "Concise fact 3"],
+  "example": "One real-world example or analogy that makes this click (1–2 sentences). OMIT this field entirely if no genuinely helpful example exists.",
+  "quick_tip": "One memorable exam tip or memory hook. OMIT this field entirely if not helpful."
+}}
+
+Do NOT add markdown fences (```) around the JSON. Return ONLY the JSON object."""
 
 
-def _strip_fences(text: str) -> str:
-    """Extract JSON object from text, ignoring markdown and conversational filler."""
-    import re
+def _extract_json(text: str) -> str:
+    """Extract the first JSON object from the model response."""
     text = text.strip()
-    
-    # Try to find a JSON block between curly braces
+    # Strip markdown fences if present
+    text = re.sub(r'^```(?:json)?\s*', '', text, flags=re.MULTILINE)
+    text = re.sub(r'\s*```$', '', text, flags=re.MULTILINE)
+    # Find first { ... } block
     match = re.search(r'\{.*\}', text, re.DOTALL)
-    if match:
-        text = match.group(0)
-    
-    return text.strip()
+    return match.group(0).strip() if match else text.strip()
 
 
 async def generate_text_answer(question: str, context: str) -> dict:
     """
     Try each free OpenRouter model in order until one returns valid JSON.
-    Returns dict: {answer, key_points}
+    Returns dict: {answer, key_points, example?, quick_tip?}
     Raises RuntimeError if all models fail.
     """
     if not OPENROUTER_KEY:
@@ -71,6 +80,7 @@ async def generate_text_answer(question: str, context: str) -> dict:
 
     prompt = USER_PROMPT_TEMPLATE.format(question=question, context=context)
     last_error = None
+    raw_text = ""
 
     for model in FREE_MODELS:
         print(f"[TextGen] Trying {model}")
@@ -90,8 +100,8 @@ async def generate_text_answer(question: str, context: str) -> dict:
                             {"role": "system", "content": SYSTEM_PROMPT},
                             {"role": "user",   "content": prompt},
                         ],
-                        "temperature": 0.4,
-                        "max_tokens": 700,
+                        "temperature": 0.5,
+                        "max_tokens": 900,
                     },
                 )
 
@@ -105,21 +115,24 @@ async def generate_text_answer(question: str, context: str) -> dict:
                 print(f"[TextGen] {model} → {last_error}")
                 continue
 
-            data = resp.json()
+            data     = resp.json()
             raw_text = data["choices"][0]["message"]["content"]
-            cleaned  = _strip_fences(raw_text)
+            cleaned  = _extract_json(raw_text)
             result   = json.loads(cleaned)
 
-            # Validate shape
             if "answer" not in result:
                 last_error = f"{model}: JSON missing 'answer' key"
                 continue
 
-            print(f"[TextGen] ✓ {model} answered successfully")
+            # Ensure key_points is always a list
+            if not isinstance(result.get("key_points"), list):
+                result["key_points"] = []
+
+            print(f"[TextGen] ✓ {model} — answer={len(result['answer'])} chars")
             return result
 
         except json.JSONDecodeError as e:
-            last_error = f"{model}: bad JSON — {e} | raw: {raw_text[:100]}"
+            last_error = f"{model}: bad JSON — {e} | raw: {raw_text[:120]}"
             print(f"[TextGen] {model} → JSON parse failed: {e}")
             continue
         except KeyError as e:
