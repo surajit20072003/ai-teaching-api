@@ -14,8 +14,6 @@ Usage:
 """
 
 import asyncio, json, time, uuid as _uuid, sys, os
-sys.path.insert(0, "/home2/ai-teaching-api")
-os.chdir("/home2/ai-teaching-api")
 
 from sqlalchemy import text
 from db.models import AsyncSessionLocal
