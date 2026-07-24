@@ -615,24 +615,41 @@ async def _pregen_text_only(
 
     _log(f"[Pregen-A] Ollama → generating slides for: {question[:80]}")
 
-    # Fetch RAG context + document access_tier if doc-linked
-    context = ""
-    doc_tier = row.get("access_tier", "pro")  # default to existing or pro
-    if doc_id:
-        r = await db.execute(
-            text("""
-                SELECT dc.chunk_text, d.access_tier
-                FROM document_chunks dc
-                JOIN documents d ON d.id = dc.document_id
-                WHERE dc.document_id = CAST(:doc_id AS uuid)
-                ORDER BY dc.chunk_index LIMIT 8
-            """),
-            {"doc_id": str(doc_id)},
-        )
-        rows_ctx = r.fetchall()
-        context = "\n\n".join(r2[0] for r2 in rows_ctx)
-        if rows_ctx and rows_ctx[0][1]:
-            doc_tier = rows_ctx[0][1]
+    # ── RAG context: semantic similarity search (same logic as real-time path) ──
+    # Embed question → search ALL subject docs by cosine similarity.
+    # This matches what the real-time path does in main.py (L5 RAG).
+    context  = ""
+    doc_tier = row.get("access_tier", "pro")
+    try:
+        q_vec   = await embed_async(question)
+        vec_str = vec_to_pg_str(q_vec)
+        rag_rows = (await db.execute(text("""
+            SELECT dc.chunk_text, dc.section_title, d.title AS doc_title, d.access_tier
+            FROM document_chunks dc
+            JOIN documents d ON d.id = dc.document_id
+            WHERE dc.chunk_embedding IS NOT NULL
+              AND dc.subject_id = :subj
+              AND d.status = 'ready'
+              AND 1 - (dc.chunk_embedding <=> CAST(:vec AS vector)) > 0.45
+            ORDER BY 1 - (dc.chunk_embedding <=> CAST(:vec AS vector)) DESC
+            LIMIT 5
+        """), {"subj": str(row["subject_id"]), "vec": vec_str})).fetchall()
+
+        if rag_rows:
+            context = "\n\n".join(
+                f"[{r.doc_title} / {r.section_title or 'Section'}]\n{r.chunk_text}"
+                for r in rag_rows
+            )
+            # Use highest-tier doc found (pro > free)
+            if any(r.access_tier == "pro" for r in rag_rows):
+                doc_tier = "pro"
+            else:
+                doc_tier = rag_rows[0].access_tier or "pro"
+            _log(f"[Pregen-A] RAG ✅ {len(rag_rows)} chunks (sim>0.45) doc_tier={doc_tier}")
+        else:
+            _log(f"[Pregen-A] RAG ⚠️  0 chunks above threshold — running on LLM knowledge only")
+    except Exception as e:
+        _log(f"[Pregen-A] RAG lookup failed (non-fatal): {e} — continuing without context")
 
     slide_data = await generate_slides(
         question  = question,
@@ -982,26 +999,38 @@ async def _pregen_one(row: Dict[str, Any], db: AsyncSession) -> None:
         _state.current_step = "ollama"
         _log(f"[Pregen] Step 1: Ollama → generating slides...")
         try:
-            # Fetch RAG context + document access_tier
-            context     = ""
-            doc_tier    = "pro"   # safe default
-            if doc_id:
-                r = await db.execute(
-                    text("""
-                        SELECT dc.chunk_text, d.access_tier
-                        FROM document_chunks dc
-                        JOIN documents d ON d.id = dc.document_id
-                        WHERE dc.document_id = CAST(:doc_id AS uuid)
-                        ORDER BY dc.chunk_index LIMIT 8
-                    """),
-                    {"doc_id": str(doc_id)},
-                )
-                rows_ctx = r.fetchall()
-                chunks   = [r2[0] for r2 in rows_ctx]
-                context  = "\n\n".join(chunks)
-                if rows_ctx:
-                    doc_tier = rows_ctx[0][1] or "pro"   # access_tier from document
-                _log(f"[Pregen] doc_tier={doc_tier} for doc_id={str(doc_id)[:8]}")
+            # ── RAG context: semantic similarity search (same as real-time path) ──
+            context  = ""
+            doc_tier = "pro"
+            try:
+                q_vec   = await embed_async(question)
+                vec_str = vec_to_pg_str(q_vec)
+                rag_rows = (await db.execute(text("""
+                    SELECT dc.chunk_text, dc.section_title, d.title AS doc_title, d.access_tier
+                    FROM document_chunks dc
+                    JOIN documents d ON d.id = dc.document_id
+                    WHERE dc.chunk_embedding IS NOT NULL
+                      AND dc.subject_id = :subj
+                      AND d.status = 'ready'
+                      AND 1 - (dc.chunk_embedding <=> CAST(:vec AS vector)) > 0.45
+                    ORDER BY 1 - (dc.chunk_embedding <=> CAST(:vec AS vector)) DESC
+                    LIMIT 5
+                """), {"subj": str(subject), "vec": vec_str})).fetchall()
+
+                if rag_rows:
+                    context = "\n\n".join(
+                        f"[{r.doc_title} / {r.section_title or 'Section'}]\n{r.chunk_text}"
+                        for r in rag_rows
+                    )
+                    if any(r.access_tier == "pro" for r in rag_rows):
+                        doc_tier = "pro"
+                    else:
+                        doc_tier = rag_rows[0].access_tier or "pro"
+                    _log(f"[Pregen] RAG ✅ {len(rag_rows)} chunks (sim>0.45) doc_tier={doc_tier}")
+                else:
+                    _log(f"[Pregen] RAG ⚠️  0 chunks above threshold — running on LLM knowledge only")
+            except Exception as e:
+                _log(f"[Pregen] RAG lookup failed (non-fatal): {e} — continuing without context")
 
             slide_data = await generate_slides(
                 question  = question,

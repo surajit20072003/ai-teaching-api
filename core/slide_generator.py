@@ -76,6 +76,24 @@ Here is relevant content from the official course material:
 {context}
 --- END DOCUMENT CONTEXT ---
 
+━━━ STEP 0 — SLIDE 1: DIRECTLY ANSWER THE QUESTION FIRST ━━━
+Slide 1 is the "answer slide". The student needs the answer IMMEDIATELY — not after background.
+
+  If the question is MCQ (has options like (a) (b) (c) (d)):
+    • title:      "Correct Answer: (b) Plants"  ← exact option letter + text
+    • content:    First sentence names the correct answer. Next 2 sentences explain WHY it is correct.
+    • keyPoints:  ["Correct option: (b) Plants", "Why: reason 1", "Why: reason 2"]
+    • infographic: All 4 options shown in a 2x2 grid. Correct option box highlighted bright green.
+                  Wrong options greyed out. Question text at the top in bold.
+
+  If the question is Descriptive/Explain/Define:
+    • title:    Core answer in 5–7 words (e.g. "Ecosystem = Living + Non-Living System")
+    • content:  Sentence 1 = direct 1-line answer. Sentences 2–3 = brief expansion.
+    • NEVER use "Introduction", "Overview", "Background" as slide 1 title.
+    • NEVER delay the answer to slide 2 or later.
+
+Slides 2 onwards → detailed explanation, deeper concepts, examples, process, steps.
+
 ━━━ STEP 1 — DECIDE SLIDE COUNT (do this BEFORE writing any slide) ━━━
 Analyse the question complexity and choose the right number of slides:
   • 1–2 slides → simple facts, dates, single definitions, yes/no answers
