@@ -156,6 +156,7 @@ async def _ensure_cache_rows(db, target: Dict, tier: str, language: str) -> List
 
     if created:
         await db.commit()
+
         log.info(f"  Created {created} new pending cache rows")
 
     # Fetch all rows that need processing (pending/failed/processing + done with missing media)
@@ -281,7 +282,7 @@ async def main(args: argparse.Namespace):
     signal.signal(signal.SIGINT, _handle_sigint)
 
     from db.models import AsyncSessionLocal
-    from core.pregen import _pregen_text_only, _pregen_media_only, _pregen_manim_only
+    from core.pregen import _pregen_text_only, _pregen_media_only, _pregen_manim_only, _enhance_image_prompt_llm
     from core.ollama_lifecycle import (
         prepare_for_text_generation, prepare_for_media_generation, prepare_for_manim_generation
     )
@@ -358,6 +359,14 @@ async def main(args: argparse.Namespace):
         try:
             async with AsyncSessionLocal() as db:
                 row = await _pregen_text_only(row, db, subject_name=target["subject_name"])
+            
+            # Save generated slides to DB immediately so progress is not lost on crash
+            async with AsyncSessionLocal() as db:
+                await db.execute(text(
+                    "UPDATE teaching_qa_cache SET presentation_slides = CAST(:slides AS jsonb) WHERE id = CAST(:id AS uuid)"
+                ), {"slides": json.dumps(row.get("presentation_slides")), "id": cache_id})
+                await db.commit()
+
             phase_a_done.append(row)
             n = len(row.get("presentation_slides") or [])
             for j, s in enumerate(row.get("presentation_slides") or []):
@@ -370,6 +379,47 @@ async def main(args: argparse.Namespace):
             phase_a_fail.append(cache_id)
 
     log.info(f"\n[Phase A] ✓ {len(phase_a_done)} ok | ✗ {len(phase_a_fail)} failed | {round(time.time()-t_a)}s")
+
+    # ═══════════════════════════════════════════════════════════════
+    # PHASE A.5 — Image Prompt Enhancement (Ollama still in VRAM)
+    #   After all slides are generated, call LLM once per slide to write
+    #   a rich, rule-following image prompt.
+    #   Must run BEFORE prepare_for_media_generation() evicts Ollama.
+    # ═══════════════════════════════════════════════════════════════
+    log.info("\n" + "=" * 65)
+    log.info("  PHASE A.5 — LLM Image Prompt Enhancement (Ollama in VRAM)")
+    log.info("=" * 65)
+
+    for row in phase_a_done:
+        if _stop: log.warning("Stop requested."); break
+        cache_id = str(row["id"])
+        slides   = row.get("presentation_slides") or []
+        if not slides:
+            continue
+
+        enhanced_any = False
+        for i, slide in enumerate(slides):
+            try:
+                enhanced = await _enhance_image_prompt_llm(slide)
+                slides[i]["enhanced_image_prompt"] = enhanced
+                enhanced_any = True
+                log.info(f"  {cache_id[:8]} slide {i+1}/{len(slides)}: ✓ ({len(enhanced)} chars)")
+            except Exception as e:
+                log.warning(f"  {cache_id[:8]} slide {i+1}: prompt enhance failed (non-fatal): {e}")
+
+        if enhanced_any:
+            try:
+                async with AsyncSessionLocal() as db:
+                    await db.execute(text(
+                        "UPDATE teaching_qa_cache SET presentation_slides = CAST(:s AS jsonb) WHERE id = CAST(:id AS uuid)"
+                    ), {"s": json.dumps(slides), "id": cache_id})
+                    await db.commit()
+                row["presentation_slides"] = slides
+                log.info(f"  {cache_id[:8]}: enhanced prompts saved to DB ✓")
+            except Exception as e:
+                log.warning(f"  {cache_id[:8]}: DB save of enhanced prompts failed (non-fatal): {e}")
+
+    log.info("[Phase A.5] Complete")
 
     # ═══════════════════════════════════════════════════════════════
     # PHASE B — MEDIA (Wan2GP + VoxCPM)
