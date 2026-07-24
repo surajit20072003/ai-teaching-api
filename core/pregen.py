@@ -632,7 +632,7 @@ async def _pregen_text_only(
               AND d.status = 'ready'
               AND 1 - (dc.chunk_embedding <=> CAST(:vec AS vector)) > 0.25
             ORDER BY 1 - (dc.chunk_embedding <=> CAST(:vec AS vector)) DESC
-            LIMIT 5
+            LIMIT 1
         """), {"subj": str(row["subject_id"]), "vec": vec_str})).fetchall()
 
         if rag_rows:
