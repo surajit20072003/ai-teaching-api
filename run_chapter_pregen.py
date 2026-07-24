@@ -140,7 +140,7 @@ async def _ensure_cache_rows(db, target: Dict, tier: str, language: str) -> List
                     (id, question_hash, question_text, subject_id, chapter_id,
                      language, access_tier, pregen_status, document_id, created_at)
                 VALUES
-                    (CAST(:id AS uuid), :hash, :text, :sid, CAST(:cid AS uuid),
+                    (CAST(:id AS uuid), :hash, :text, :sid, :cid,
                      :lang, :tier, 'pending', CAST(:doc_id AS uuid), NOW())
             """), {
                 "id":     new_id,
@@ -166,7 +166,7 @@ async def _ensure_cache_rows(db, target: Dict, tier: str, language: str) -> List
             presentation_slides, image_urls, slide_audio_urls, manim_video_urls
         FROM teaching_qa_cache
         WHERE subject_id = :sid
-          AND chapter_id = CAST(:cid AS uuid)
+          AND chapter_id = :cid
           AND (
               pregen_status IN ('pending', 'failed', 'processing')
               OR (
