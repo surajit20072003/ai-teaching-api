@@ -282,6 +282,7 @@ async def main(args: argparse.Namespace):
     signal.signal(signal.SIGINT, _handle_sigint)
 
     from db.models import AsyncSessionLocal
+    from sqlalchemy import text
     from core.pregen import _pregen_text_only, _pregen_media_only, _pregen_manim_only, _enhance_image_prompt_llm
     from core.ollama_lifecycle import (
         prepare_for_text_generation, prepare_for_media_generation, prepare_for_manim_generation
