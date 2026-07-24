@@ -630,7 +630,7 @@ async def _pregen_text_only(
             WHERE dc.chunk_embedding IS NOT NULL
               AND dc.subject_id = :subj
               AND d.status = 'ready'
-              AND 1 - (dc.chunk_embedding <=> CAST(:vec AS vector)) > 0.45
+              AND 1 - (dc.chunk_embedding <=> CAST(:vec AS vector)) > 0.25
             ORDER BY 1 - (dc.chunk_embedding <=> CAST(:vec AS vector)) DESC
             LIMIT 5
         """), {"subj": str(row["subject_id"]), "vec": vec_str})).fetchall()
@@ -645,7 +645,7 @@ async def _pregen_text_only(
                 doc_tier = "pro"
             else:
                 doc_tier = rag_rows[0].access_tier or "pro"
-            _log(f"[Pregen-A] RAG ✅ {len(rag_rows)} chunks (sim>0.45) doc_tier={doc_tier}")
+            _log(f"[Pregen-A] RAG ✅ {len(rag_rows)} chunks (sim>0.25) doc_tier={doc_tier}")
         else:
             _log(f"[Pregen-A] RAG ⚠️  0 chunks above threshold — running on LLM knowledge only")
     except Exception as e:
