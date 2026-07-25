@@ -15,13 +15,14 @@ import os, json, re, httpx
 OPENROUTER_BASE = "https://openrouter.ai/api/v1"
 OPENROUTER_KEY  = os.getenv("OPENROUTER_API_KEY", "")
 
-# Free models in priority order — all have $0 prompt/completion pricing
+# Free models in priority order (verified free as of 2026-07-24 from OpenRouter API)
 FREE_MODELS = [
-    "nvidia/nemotron-3-super-120b-a12b:free",
-    "meta-llama/llama-3.3-70b-instruct:free",
-    "qwen/qwen3-coder:free",
-    "nvidia/nemotron-3-nano-30b-a3b:free",
-    "openrouter/auto",
+    "nvidia/nemotron-3-ultra-550b-a55b:free",      # NVIDIA Nemotron 3 Ultra 550B — largest free model
+    "google/gemma-4-31b-it:free",                  # Google Gemma 4 31B — strong instruction following
+    "google/gemma-4-26b-a4b-it:free",              # Google Gemma 4 26B — fast alternative
+    "nvidia/nemotron-3-super-120b-a12b:free",      # NVIDIA Nemotron Super 120B
+    "nvidia/nemotron-3-nano-30b-a3b:free",         # NVIDIA Nemotron Nano 30B — final fallback
+    "openrouter/auto",                             # Last resort: OpenRouter auto-selects
 ]
 
 SYSTEM_PROMPT = """\

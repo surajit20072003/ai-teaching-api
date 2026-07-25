@@ -37,6 +37,7 @@ router = APIRouter()
 
 async def _fetch_doc_context(db, subject_id, vec_str, user_tier="pro"):
     tier_filter = "AND dc.access_tier = 'free'" if user_tier == "free" else ""
+    # Fetch more candidates so one chapter can't flood all slots
     rows = await db.execute(sql_text(f"""
         SELECT
             dc.chunk_text,
@@ -49,13 +50,30 @@ async def _fetch_doc_context(db, subject_id, vec_str, user_tier="pro"):
           AND dc.chunk_embedding IS NOT NULL
           {tier_filter}
         ORDER BY dc.chunk_embedding <=> CAST(:vec AS vector)
-        LIMIT 3
+        LIMIT 10
     """), {"vec": vec_str, "subject_id": subject_id})
     results = rows.mappings().all()
-    chunks  = [r["chunk_text"] for r in results]
-    sources = [{"doc_title": r["doc_title"], "section_title": r.get("section_title", "")} for r in results]
-    cache_tier = "free"
+
+    # Deduplicate: allow max 1 chunk per doc_title, picking the highest-sim one.
+    # This prevents a single chapter (e.g. Heredity) from occupying all slots.
+    seen_docs: dict = {}  # doc_title -> best result row
     for r in results:
+        doc = r["doc_title"]
+        if doc not in seen_docs or float(r["sim"]) > float(seen_docs[doc]["sim"]):
+            seen_docs[doc] = r
+
+    # Re-sort deduplicated results by sim descending, take top 4
+    deduped = sorted(seen_docs.values(), key=lambda r: float(r["sim"]), reverse=True)[:4]
+
+    # Log sim scores for debugging
+    sims = [round(float(r["sim"]), 3) for r in deduped]
+    docs = [r["doc_title"][:35] for r in deduped]
+    print(f"[L4] RAG top chunks | sims={sims} | docs={docs}")
+
+    chunks  = [r["chunk_text"] for r in deduped]
+    sources = [{"doc_title": r["doc_title"], "section_title": r.get("section_title", "")} for r in deduped]
+    cache_tier = "free"
+    for r in deduped:
         if r["access_tier"] == "pro":
             cache_tier = "pro"
             break

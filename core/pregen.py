@@ -21,6 +21,7 @@ import asyncio
 import base64
 import json
 import os
+import re
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -217,6 +218,9 @@ async def _enhance_image_prompt_llm(slide: dict) -> str:
         content = (resp.json().get("message") or {}).get("content", "").strip()
         # Validate: must be a meaningful prompt (>40 chars) and not JSON
         if len(content) > 40 and not content.startswith("{"):
+            # Strip hex color codes — Wan2GP renders them as literal text artifacts in the image
+            content = re.sub(r'#[0-9A-Fa-f]{3,8}\b', '', content)
+            content = ' '.join(content.split())  # normalize any extra whitespace
             _log(f"[Pregen-A5] ✓ enhanced prompt: {len(content)} chars")
             return content
         _log(f"[Pregen-A5] LLM returned short/invalid output ({len(content)} chars) — using template")

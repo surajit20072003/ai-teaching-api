@@ -34,7 +34,8 @@ LANGUAGE     = "hi-IN"
 DRY_RUN      = False
 
 QUESTIONS = [
-    "What is an ecosystem? Explain its components.",
+    "Explain the structure and functioning of an ecosystem. (4 Marks)",
+    "Explain the role of producers, consumers, and decomposers in an ecosystem",
 ]
 
 

@@ -398,8 +398,18 @@ async def main(args: argparse.Namespace):
         if not slides:
             continue
 
+        # ── Row-level skip: if ALL slides already have enhanced prompts, skip entirely ──
+        all_enhanced = all(s.get("enhanced_image_prompt") for s in slides)
+        if all_enhanced:
+            log.info(f"  {cache_id[:8]}: → SKIP entire row (all {len(slides)} slides already enhanced)")
+            continue
+
         enhanced_any = False
         for i, slide in enumerate(slides):
+            # ── Slide-level skip: already enhanced on a previous run ──
+            if slide.get("enhanced_image_prompt"):
+                log.info(f"  {cache_id[:8]} slide {i+1}/{len(slides)}: → SKIP (already enhanced)")
+                continue
             try:
                 enhanced = await _enhance_image_prompt_llm(slide)
                 slides[i]["enhanced_image_prompt"] = enhanced
