@@ -243,11 +243,73 @@ def _parse_slides(raw: str) -> dict:
         if slide.get("isStory") or slide.get("isTips"):
             slide["visual_type"] = "image"
 
+    # ── Phase A.1 — Formula extraction pass ──────────────────────────────────
+    # For slides where LLM left formula empty, ask Ollama to extract it.
+    # This runs inline after slide generation so Manim is correctly triggered.
+    for slide in slides:
+        if slide.get("isStory") or slide.get("isTips"):
+            continue  # never manim
+        if slide.get("formula", "").strip():
+            continue  # already has formula
+        if slide.get("visual_type") == "manim":
+            continue  # already decided
+        extracted = await _extract_formula_for_slide(slide)
+        if extracted:
+            slide["formula"] = extracted
+            slide["visual_type"] = "manim"
+            logger.info(f"[SlideGen] formula extracted: {extracted[:60]}")
+
     data["presentation_slides"] = slides
     return data
 
 
-# ── Ollama client ─────────────────────────────────────────────────────────────
+# ── Formula extractor (inline, called during slide post-processing) ────────────
+_FORMULA_CHECK_PROMPT = (
+    "You are a math teacher assistant. Does this slide contain a mathematical "
+    "formula, equation, or algebraic expression that should be rendered as an animation?\n"
+    "Slide title: {title}\n"
+    "Slide description: {infographic}\n\n"
+    "If YES, respond with ONLY the LaTeX formula (e.g. \\sqrt{{7}}, \\frac{{p}}{{q}}, "
+    "a^2+b^2=c^2). If NO, respond with exactly: NONE"
+)
+
+import re as _re
+_TRIVIAL_FRAC = _re.compile(r"^\\frac\{-?\d+\}\{-?\d+\}$")
+
+async def _extract_formula_for_slide(slide: dict) -> str:
+    """
+    Call Ollama to extract a LaTeX formula from a slide that the LLM left empty.
+    Returns the formula string or empty string if none found.
+    Only called for non-story, non-tips slides with empty formula.
+    """
+    title = (slide.get("title") or "")[:150]
+    infographic = (slide.get("infographic") or "")[:250]
+    prompt = _FORMULA_CHECK_PROMPT.format(title=title, infographic=infographic)
+    try:
+        payload = {
+            "model": OLLAMA_MODEL, "stream": False,
+            "messages": [{"role": "user", "content": prompt}],
+            "options": {"temperature": 0.1, "num_predict": 80},
+        }
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(f"{OLLAMA_URL}/api/chat", json=payload)
+            resp.raise_for_status()
+        result = ((resp.json().get("message") or {}).get("content") or "").strip().strip("`")
+        if not result or "NONE" in result.upper():
+            return ""
+        # Must look like LaTeX
+        if not (result.startswith("\\") or any(c in result for c in ["^", "_", "sqrt", "frac", "times", "="])):
+            return ""
+        # Reject trivially simple fractions like \frac{1}{4}
+        if _TRIVIAL_FRAC.match(result.strip()):
+            return ""
+        if len(result.strip()) < 4:
+            return ""
+        return result
+    except Exception as e:
+        logger.debug(f"[SlideGen] formula extract failed (non-fatal): {e}")
+        return ""
+
 async def _generate_via_ollama(prompt: str) -> str:
     """
     PRE-GENERATION PATH: Call local Ollama — free, local GPU, no API cost.
