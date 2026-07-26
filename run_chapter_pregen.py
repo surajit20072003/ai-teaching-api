@@ -471,11 +471,15 @@ async def main(args: argparse.Namespace):
         log.info("  [--retry-manim] Skipping Phase B — reusing existing images + audio")
         for row in phase_a_done:
             slides = row.get("presentation_slides") or []
-            # Pass through with dummy enriched (existing slides already have URLs)
-            row["_enriched"]   = slides
+            # Normalize: slides from DB may be a list of dicts already
+            if isinstance(slides, list):
+                slide_list = slides
+            else:
+                slide_list = list(slides)
+            row["_enriched"]   = slide_list
             row["_audio_list"] = []
             row["_total_dur"]  = 0
-            row["_audio_durs"] = []
+            row["_audio_durs"] = {}   # MUST be dict, not list — _pregen_manim_only calls .get(idx, default)
             row["_img_map"]    = {}
             phase_b_done.append(row)
         log.info(f"  {len(phase_b_done)} rows loaded for Manim-only processing")
