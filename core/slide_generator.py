@@ -243,22 +243,6 @@ def _parse_slides(raw: str) -> dict:
         if slide.get("isStory") or slide.get("isTips"):
             slide["visual_type"] = "image"
 
-    # ── Phase A.1 — Formula extraction pass ──────────────────────────────────
-    # For slides where LLM left formula empty, ask Ollama to extract it.
-    # This runs inline after slide generation so Manim is correctly triggered.
-    for slide in slides:
-        if slide.get("isStory") or slide.get("isTips"):
-            continue  # never manim
-        if slide.get("formula", "").strip():
-            continue  # already has formula
-        if slide.get("visual_type") == "manim":
-            continue  # already decided
-        extracted = await _extract_formula_for_slide(slide)
-        if extracted:
-            slide["formula"] = extracted
-            slide["visual_type"] = "manim"
-            logger.info(f"[SlideGen] formula extracted: {extracted[:60]}")
-
     data["presentation_slides"] = slides
     return data
 
@@ -384,4 +368,23 @@ async def generate_slides(
     else:
         raw = await _generate_via_openrouter(prompt)
 
-    return _parse_slides(raw)
+    data = _parse_slides(raw)
+
+    # ── Phase A.1 — Formula extraction pass (async, must be here not in _parse_slides) ──
+    # For slides where LLM left formula empty, ask Ollama to extract it.
+    slides = data.get("presentation_slides", [])
+    for slide in slides:
+        if slide.get("isStory") or slide.get("isTips"):
+            continue
+        if slide.get("formula", "").strip():
+            continue  # already has formula
+        if slide.get("visual_type") == "manim":
+            continue
+        extracted = await _extract_formula_for_slide(slide)
+        if extracted:
+            slide["formula"] = extracted
+            slide["visual_type"] = "manim"
+            logger.info(f"[SlideGen] formula extracted: {extracted[:60]}")
+    data["presentation_slides"] = slides
+
+    return data
