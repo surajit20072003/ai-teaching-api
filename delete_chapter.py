@@ -184,6 +184,14 @@ async def main(args: argparse.Namespace):
     async with AsyncSessionLocal() as db:
         targets = await _resolve_targets(db, args.subject, chapter_number)
 
+    # Filter out the excepted chapter when --except is given
+    if getattr(args, "except_chapter", None) is not None:
+        before = len(targets)
+        targets = [t for t in targets if t["chapter_number"] != args.except_chapter]
+        skipped = before - len(targets)
+        if skipped:
+            _log(f"  Skipping Ch{args.except_chapter} (--except) — {skipped} chapter(s) excluded")
+
     if not targets:
         _log("\nNo targets found. Check subject/chapter args."); sys.exit(1)
 
@@ -213,5 +221,7 @@ if __name__ == "__main__":
     parser.add_argument("--subject", required=True, help="science | social | math | all")
     parser.add_argument("--chapter", type=int, default=1, help="Chapter number (default: 1)")
     parser.add_argument("--all-chapters", action="store_true", help="Delete ALL chapters for subject")
+    parser.add_argument("--except", type=int, dest="except_chapter", default=None,
+                        help="Skip this chapter number when using --all-chapters (e.g. --except 1)")
     parser.add_argument("--dry-run", action="store_true", help="Preview only, delete nothing")
     asyncio.run(main(parser.parse_args()))
