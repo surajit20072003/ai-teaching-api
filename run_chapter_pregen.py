@@ -159,8 +159,22 @@ async def _ensure_cache_rows(db, target: Dict, tier: str, language: str) -> List
 
         log.info(f"  Created {created} new pending cache rows")
 
-    # Fetch all rows that need processing (pending/failed/processing + done with missing media)
-    rows = (await db.execute(text("""
+    # Build the WHERE clause — add manim condition when --retry-manim is used
+    # We cannot pass args here so use a module-level flag set before calling
+    manim_retry_clause = ""
+    if getattr(_ensure_cache_rows, "_retry_manim", False):
+        manim_retry_clause = """
+              OR (
+                  pregen_status = 'done'
+                  AND presentation_slides IS NOT NULL
+                  AND EXISTS (
+                      SELECT 1 FROM jsonb_array_elements(presentation_slides) AS s
+                      WHERE s->>'visual_type' = 'manim'
+                  )
+                  AND (manim_video_urls IS NULL OR manim_video_urls = '{}'::jsonb)
+              )"""
+
+    rows = (await db.execute(text(f"""
         SELECT
             id, question_text, question_hash, subject_id, chapter_id,
             document_id, language, pregen_status, access_tier,
@@ -178,11 +192,13 @@ async def _ensure_cache_rows(db, target: Dict, tier: str, language: str) -> List
                       OR presentation_slides->0->>'audioUrl' NOT LIKE 'http%'
                   )
               )
+              {manim_retry_clause}
           )
         ORDER BY created_at ASC
     """), {"sid": sid, "cid": chapter_id})).fetchall()
 
     return [dict(r._mapping) for r in rows]
+
 
 
 async def _mark_processing(db, cache_id: str):
@@ -306,6 +322,7 @@ async def main(args: argparse.Namespace):
 
     # Ensure cache rows exist + fetch pending
     async with AsyncSessionLocal() as db:
+        _ensure_cache_rows._retry_manim = args.retry_manim  # pass flag into query builder
         all_rows = await _ensure_cache_rows(db, target, tier, language)
 
     total = len(all_rows)
