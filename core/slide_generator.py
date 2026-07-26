@@ -357,11 +357,17 @@ async def generate_slides(
                       NO fallback — failure = row marked failed, retried later
     use_local=False → OpenRouter (real-time user request, fast cloud, timeout=90s)
     """
-    prompt = (
-        RAG_PROMPT.format(question=question, subject=subject, context=context)
-        if context else
-        SLIDE_PROMPT.format(question=question, subject=subject)
-    )
+    if context:
+        prompt = (
+            RAG_PROMPT.replace("{question}", question)
+                      .replace("{subject}", subject)
+                      .replace("{context}", context)
+        )
+    else:
+        prompt = (
+            SLIDE_PROMPT.replace("{question}", question)
+                        .replace("{subject}", subject)
+        )
 
     if use_local:
         raw = await _generate_via_ollama(prompt)
