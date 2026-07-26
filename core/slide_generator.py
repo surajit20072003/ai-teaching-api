@@ -55,8 +55,12 @@ MAXIMUM is 6 slides. NEVER write more than 6.
    (e.g. "Diagram of food chain: Sun → Grass → Rabbit → Fox, with arrows and labels"
     NOT "diagram of concept").
 5. "keyPoints": exactly 3 crisp bullet points per slide.
-6. "formula": exact LaTeX if slide has math, else empty string "".
-7. "visual_type": "manim" for math formulas/graphs/geometry. "image" for everything else.
+6. "formula": If the slide involves ANY mathematical expression, equation, proof step,
+   or algebraic identity — write the EXACT LaTeX. Examples:
+     \sqrt{7},  \frac{p}{q},  a^2 + b^2 = c^2,  \text{HCF}(a,b) \times \text{LCM}(a,b) = a \times b
+   If there is NO math formula at all, use empty string "".
+   NEVER leave formula empty when there is a mathematical expression in the slide.
+7. "visual_type": MUST be "manim" if formula field is non-empty. Use "image" only when formula is empty.
    isStory and isTips slides MUST always be "image".
 
 ━━━ STEP 3 — SPECIAL SLIDES (only if total slides ≥ 3) ━━━
@@ -122,8 +126,12 @@ RULES:
    (e.g. "Venn diagram comparing photosynthesis vs respiration with 3 differences labelled"
     NOT "diagram of concept").
 5. "keyPoints": exactly 3 crisp, fact-based bullet points per slide.
-6. "formula": exact LaTeX if slide has math, else empty string "".
-7. "visual_type": "manim" for math/graphs/geometry slides. "image" for all others.
+6. "formula": If the slide involves ANY mathematical expression, equation, proof step,
+   algebraic identity, or symbolic expression — write the EXACT LaTeX. Examples:
+     \sqrt{7},  \frac{p}{q},  a^2+b^2=c^2,  \text{HCF}(a,b)\times\text{LCM}(a,b)=a\times b
+   If there is NO math formula at all, use empty string "".
+   NEVER leave formula empty when there is a mathematical expression in the slide.
+7. "visual_type": MUST be "manim" if formula field is non-empty. MUST be "image" if formula is empty.
    isStory and isTips slides MUST always be "image".
 
 ━━━ STEP 4 — SPECIAL SLIDES (only if total slides ≥ 3) ━━━
@@ -222,11 +230,13 @@ def _parse_slides(raw: str) -> dict:
 
     # ── Ensure visual_type defaults correctly ────────────────────────────────
     for slide in slides:
-        if not slide.get("visual_type"):
+        # If formula is present, ALWAYS use manim — regardless of what the LLM returned.
+        # The LLM sometimes outputs visual_type="image" even on formula slides.
+        if slide.get("formula", "").strip() and not slide.get("isStory") and not slide.get("isTips"):
+            slide["visual_type"] = "manim"
+        elif not slide.get("visual_type"):
             if slide.get("isStory") or slide.get("isTips"):
                 slide["visual_type"] = "image"
-            elif slide.get("formula", "").strip():
-                slide["visual_type"] = "manim"
             else:
                 slide["visual_type"] = "image"
         # Safety: story/tips must always be image
