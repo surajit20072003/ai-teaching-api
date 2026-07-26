@@ -408,7 +408,13 @@ async def main(args: argparse.Namespace):
     log.info("  PHASE A.5 — LLM Image Prompt Enhancement (Ollama in VRAM)")
     log.info("=" * 65)
 
-    for row in phase_a_done:
+    if args.retry_manim:
+        log.info("  [--retry-manim] Skipping Phase A.5 — prompts already enhanced")
+        phase_a5_rows = []
+    else:
+        phase_a5_rows = phase_a_done
+
+    for row in phase_a5_rows:
         if _stop: log.warning("Stop requested."); break
         cache_id = str(row["id"])
         slides   = row.get("presentation_slides") or []
@@ -456,48 +462,63 @@ async def main(args: argparse.Namespace):
     log.info("  PHASE B — Media Generation (Wan2GP images + VoxCPM audio)")
     log.info("=" * 65)
 
-    try:
-        n = await prepare_for_media_generation()
-        log.info(f"  ✓ {n} model(s) evicted — GPU ready for Wan2GP + VoxCPM")
-    except Exception as e:
-        log.warning(f"  Eviction failed (non-fatal): {e}")
-
     phase_b_done: List[Dict] = []
     phase_b_fail: List[str] = []
-    t_b = time.time()
 
-    for i, row in enumerate(phase_a_done, 1):
-        if _stop: log.warning("Stop requested."); break
-        cache_id = str(row["id"])
-        slides   = row.get("presentation_slides") or []
-        question = (row.get("question_text") or "")[:70]
-
-        log.info(f"\n[B {i}/{len(phase_a_done)}] {question}")
-        log.info(f"  {len(slides)} slides → Wan2GP + VoxCPM...")
-
-        t0 = time.time()
-        try:
-            async with AsyncSessionLocal() as db:
-                enriched, audio_list, total_dur, audio_durs, img_map = \
-                    await _pregen_media_only(row, slides, db=db)
-            row["_enriched"]    = enriched
-            row["_audio_list"]  = audio_list
-            row["_total_dur"]   = total_dur
-            row["_audio_durs"]  = audio_durs
-            row["_img_map"]     = img_map
+    if args.retry_manim:
+        # Skip Phase B entirely — images and audio already exist.
+        # Load existing enriched slide data from DB so Phase C/D can use it.
+        log.info("  [--retry-manim] Skipping Phase B — reusing existing images + audio")
+        for row in phase_a_done:
+            slides = row.get("presentation_slides") or []
+            # Pass through with dummy enriched (existing slides already have URLs)
+            row["_enriched"]   = slides
+            row["_audio_list"] = []
+            row["_total_dur"]  = 0
+            row["_audio_durs"] = []
+            row["_img_map"]    = {}
             phase_b_done.append(row)
-
-            for j, s in enumerate(enriched):
-                img = '✓' if (s.get('infographicUrl') or '').startswith('http') else '✗'
-                aud = '✓' if (s.get('audioUrl') or '').startswith('http') else '✗'
-                log.info(f"  Slide {j+1}: img={img} audio={aud} ({round(s.get('duration',0),1)}s)")
-            log.info(f"  ✓ imgs={len(img_map)} audio={len(audio_list)} in {round(time.time()-t0)}s")
+        log.info(f"  {len(phase_b_done)} rows loaded for Manim-only processing")
+    else:
+        try:
+            n = await prepare_for_media_generation()
+            log.info(f"  ✓ {n} model(s) evicted — GPU ready for Wan2GP + VoxCPM")
         except Exception as e:
-            log.error(f"  ✗ FAILED: {e}")
-            async with AsyncSessionLocal() as db: await _mark_failed(db, cache_id, str(e))
-            phase_b_fail.append(cache_id)
+            log.warning(f"  Eviction failed (non-fatal): {e}")
 
-    log.info(f"\n[Phase B] ✓ {len(phase_b_done)} ok | ✗ {len(phase_b_fail)} failed | {round(time.time()-t_b)}s")
+        t_b = time.time()
+        for i, row in enumerate(phase_a_done, 1):
+            if _stop: log.warning("Stop requested."); break
+            cache_id = str(row["id"])
+            slides   = row.get("presentation_slides") or []
+            question = (row.get("question_text") or "")[:70]
+
+            log.info(f"\n[B {i}/{len(phase_a_done)}] {question}")
+            log.info(f"  {len(slides)} slides → Wan2GP + VoxCPM...")
+
+            t0 = time.time()
+            try:
+                async with AsyncSessionLocal() as db:
+                    enriched, audio_list, total_dur, audio_durs, img_map = \
+                        await _pregen_media_only(row, slides, db=db)
+                row["_enriched"]    = enriched
+                row["_audio_list"]  = audio_list
+                row["_total_dur"]   = total_dur
+                row["_audio_durs"]  = audio_durs
+                row["_img_map"]     = img_map
+                phase_b_done.append(row)
+
+                for j, s in enumerate(enriched):
+                    img = '✓' if (s.get('infographicUrl') or '').startswith('http') else '✗'
+                    aud = '✓' if (s.get('audioUrl') or '').startswith('http') else '✗'
+                    log.info(f"  Slide {j+1}: img={img} audio={aud} ({round(s.get('duration',0),1)}s)")
+                log.info(f"  ✓ imgs={len(img_map)} audio={len(audio_list)} in {round(time.time()-t0)}s")
+            except Exception as e:
+                log.error(f"  ✗ FAILED: {e}")
+                async with AsyncSessionLocal() as db: await _mark_failed(db, cache_id, str(e))
+                phase_b_fail.append(cache_id)
+
+        log.info(f"\n[Phase B] ✓ {len(phase_b_done)} ok | ✗ {len(phase_b_fail)} failed | {round(time.time()-t_b)}s")
 
     # ═══════════════════════════════════════════════════════════════
     # PHASE C + D — MANIM + SAVE
