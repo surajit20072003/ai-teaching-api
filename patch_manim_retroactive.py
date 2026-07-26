@@ -28,10 +28,10 @@ Slide title: {title}
 Slide description: {infographic}
 Slide content: {content}
 
-If the slide clearly contains a math formula/equation/expression (like √2, HCF formula, proof steps, algebraic identity, etc.), respond with ONLY the LaTeX formula string, e.g.:
-  \\sqrt{7}
-  \\text{HCF}(a,b) \\times \\text{LCM}(a,b) = a \\times b
-  2 + \\sqrt{3} = \\frac{p}{q}
+If the slide clearly contains a math formula/equation/expression (like sqrt, HCF formula, proof steps, algebraic identity, etc.), respond with ONLY the LaTeX formula string, e.g.:
+  \\sqrt{{7}}
+  \\text{{HCF}}(a,b) \\times \\text{{LCM}}(a,b) = a \\times b
+  2 + \\sqrt{{3}} = \\frac{{p}}{{q}}
 
 If the slide does NOT have a specific math formula (it's just a diagram, Venn diagram, flowchart, story, tips, number line without equation, etc.), respond with exactly:
   NONE
