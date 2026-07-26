@@ -72,9 +72,19 @@ async def extract_formula_from_slide(slide: dict) -> str | None:
         # Clean up the response
         result = result.strip("`").strip()
         # Must be reasonable LaTeX (contains backslash or math chars)
-        if len(result) > 1 and (result.startswith("\\") or any(c in result for c in ["sqrt", "frac", "^", "_", "=", "+", "times"])):
-            return result
-        return None
+        if not (len(result) > 1 and (result.startswith("\\") or any(c in result for c in ["sqrt", "frac", "^", "_", "=", "+", "times"]))):
+            return None
+        # Reject trivially simple formulas — not worth a Manim render
+        # e.g. \frac{1}{4}, \frac{-4}{1} — simple fractions with plain integers
+        import re as _re
+        # Skip if formula is just a simple fraction with no irrational/algebraic content
+        trivial_fraction = _re.fullmatch(r"\\frac\{-?\d+\}\{-?\d+\}", result.strip())
+        if trivial_fraction:
+            return None
+        # Skip if formula is just a single number or very short plain expression
+        if len(result.strip()) < 4:
+            return None
+        return result
     except Exception as e:
         print(f"    Ollama error: {e}")
         return None
