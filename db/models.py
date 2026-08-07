@@ -76,8 +76,34 @@ class Document(Base):
     status               = Column(String(20), default="processing")  # processing | ready | failed
     language             = Column(String(10), default="hi-IN")
     access_tier          = Column(String(20), nullable=False, server_default="pro")  # 'free' | 'pro'
+    # Migration 011: parsed content for textbook notes generation
+    content_markdown     = Column(Text, nullable=True)            # full parsed markdown
+    parsed_images        = Column(JSONB, default=dict)            # {image_filename.jpg: b2_url}
     created_at           = Column(TIMESTAMP(timezone=True), server_default=func.now())
     updated_at           = Column(TIMESTAMP(timezone=True), server_default=func.now())
+
+
+# -- Migration 015: NoteDocument (notes-only document registry) -------------------
+class NoteDocument(Base):
+    __tablename__ = "note_documents"
+
+    id                   = Column(UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid())
+    subject_id           = Column(String, nullable=False)
+    chapter_id           = Column(UUID(as_uuid=True), ForeignKey("chapters.id", ondelete="SET NULL"), nullable=True)
+    topic_id             = Column(UUID(as_uuid=True), ForeignKey("topics.id",   ondelete="SET NULL"), nullable=True)
+    title                = Column(Text, nullable=False)
+    filename             = Column(Text, nullable=False)
+    local_raw_path       = Column(Text, nullable=False)
+    local_processed_path = Column(Text, nullable=True)
+    b2_url               = Column(Text, nullable=True)
+    content_markdown     = Column(Text, nullable=True)
+    parsed_images        = Column(JSONB, default=dict)
+    language             = Column(String(10), default="hi-IN")
+    access_tier          = Column(String(20), nullable=False, server_default="pro")
+    notes_status         = Column(String(20), default="pending")  # pending | generating | done | failed
+    created_at           = Column(TIMESTAMP(timezone=True), server_default=func.now())
+    updated_at           = Column(TIMESTAMP(timezone=True), server_default=func.now())
+
 
 # -- New: DocumentChunk --------------------------------------------------------
 class DocumentChunk(Base):
@@ -170,6 +196,36 @@ class Question(Base):
     cache_id                = Column(UUID(as_uuid=True), nullable=True)
 
     created_at              = Column(TIMESTAMP(timezone=True), server_default=func.now())
+
+
+# -- Migration 011: TopicNote (textbook notes + question answers) -------------
+class TopicNote(Base):
+    __tablename__ = "topic_notes"
+
+    id                  = Column(UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid())
+    document_id         = Column(UUID(as_uuid=True), ForeignKey("documents.id", ondelete="CASCADE"), nullable=False)
+    subject_id          = Column(String, nullable=False)
+    chapter_id          = Column(UUID(as_uuid=True), nullable=True)
+    topic_id            = Column(UUID(as_uuid=True), nullable=True)
+
+    # Textbook notes (sections with text + images + formulas)
+    note_sections       = Column(JSONB, default=list)
+    note_image_urls     = Column(JSONB, default=list)
+    note_latex_formulas = Column(JSONB, default=list)
+
+    # Question answers (one entry per question with full structured answer)
+    question_answers    = Column(JSONB, default=list)
+    answer_image_urls   = Column(JSONB, default=list)
+
+    # Migration 014: local filesystem paths for note images (parallel to note_image_urls)
+    note_image_local_paths = Column(JSONB, default=list)
+
+    # Status
+    notes_status        = Column(String(20), default="pending")  # pending | generating | done | failed
+    error_message       = Column(Text, nullable=True)
+    generated_at        = Column(TIMESTAMP(timezone=True), nullable=True)
+    created_at          = Column(TIMESTAMP(timezone=True), server_default=func.now())
+    updated_at          = Column(TIMESTAMP(timezone=True), server_default=func.now())
 
 
 async def get_db():

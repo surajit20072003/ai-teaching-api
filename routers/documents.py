@@ -130,7 +130,7 @@ async def upload_document(
     await append_log("uploads", f"doc={doc_id} subject={subject_id} title={title!r} chunks={result['total_chunks']}")
 
     # Launch pre-generation background task
-    background_tasks.add_task(_launch_pregen, doc_id, subject_id)
+    background_tasks.add_task(_launch_pregen, doc_id, subject_id, background_tasks)
 
     return {
         "success": True, "document_id": doc_id, "title": title,
@@ -141,12 +141,13 @@ async def upload_document(
     }
 
 
-async def _launch_pregen(doc_id: str, subject_id: str):
+async def _launch_pregen(doc_id: str, subject_id: str, background_tasks):
     """
     Background task after document upload:
     1. Fetch all chunk texts for this document
     2. Call predict_questions() to generate 20 AI-predicted questions (8.3)
     3. Mark document status = 'ready' (pre-gen batch runs separately via /pregen/start)
+    4. Save content_markdown + queue notes generation
     """
     try:
         async with AsyncSessionLocal() as db:
@@ -182,7 +183,32 @@ async def _launch_pregen(doc_id: str, subject_id: str):
                     .values(status="ready")
                 )
             await db.commit()
-            logger.info(f"[pregen] doc={doc_id} marked ready. Use POST /pregen/start to begin batch.")
+
+            # ── Save content_markdown for notes generation ───────────────────────
+            from pathlib import Path
+            row = (await db.execute(
+                select(Document.local_processed_path).where(Document.id == uuid.UUID(doc_id))
+            )).scalar_one_or_none()
+            if row:
+                p = Path(row)
+                if p.exists():
+                    try:
+                        content_md = p.read_text(encoding="utf-8", errors="replace")
+                        await db.execute(
+                            update(Document)
+                            .where(Document.id == uuid.UUID(doc_id))
+                            .values(content_markdown=content_md)
+                        )
+                        await db.commit()
+                        logger.info(f"[notes-autoqueue] Saved {len(content_md)} chars of markdown for doc={doc_id}")
+                    except Exception as e:
+                        logger.warning(f"[notes-autoqueue] Failed to read extracted.txt: {e}")
+
+            logger.info(f"[pregen] doc={doc_id} marked ready.")
+
+            # ── Auto-queue notes generation (after status=ready) ──────────────
+            background_tasks.add_task(_auto_generate_notes, doc_id)
+            logger.info(f"[notes-autoqueue] Queued notes generation for doc={doc_id}")
     except Exception as e:
         logger.error(f"[pregen] Background task failed for doc={doc_id}: {e}")
         try:
@@ -197,6 +223,22 @@ async def _launch_pregen(doc_id: str, subject_id: str):
                 await db.commit()
         except Exception:
             pass
+
+
+# ── Notes auto-generation (separate background task) ─────────────────────────
+async def _auto_generate_notes(doc_id: str):
+    """
+    Background task — runs AFTER _launch_pregen has marked the document ready.
+    Generates textbook notes + question answers using  free models.
+    Completely isolated from pregen: writes only to topic_notes table.
+    Failures are logged but don't affect document status.
+    """
+    try:
+        from core.notes.note_service import generate_notes_for_document
+        async with AsyncSessionLocal() as db:
+            await generate_notes_for_document(document_id=doc_id, db=db)
+    except Exception as e:
+        logger.error(f"[notes-autoqueue] Notes gen failed for doc={doc_id}: {e}")
 
 
 

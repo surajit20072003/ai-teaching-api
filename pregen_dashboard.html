@@ -230,6 +230,275 @@
       .container { padding: 16px; }
       .controls { flex-direction: column; }
     }
+    /* ── Textbook-style notes viewer ─────────────────────────────────────────── */
+    .notes-viewer {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 24px;
+      line-height: 1.75;
+      font-size: 14px;
+      color: var(--text);
+      font-family: 'Georgia', 'Times New Roman', serif;
+    }
+    .notes-viewer .notes-meta {
+      font-family: 'Inter', sans-serif;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-bottom: 20px;
+      padding-bottom: 14px;
+      border-bottom: 1px solid var(--border);
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .notes-viewer .notes-meta .nv-badge {
+      background: var(--bg3);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 3px 10px;
+      font-family: 'JetBrains Mono', monospace;
+      color: var(--text);
+    }
+    .notes-section-card {
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 18px 22px;
+      margin-bottom: 16px;
+      page-break-inside: avoid;
+    }
+    .notes-section-card .sec-num {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 28px; height: 28px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      color: #fff;
+      font-family: 'Inter', sans-serif;
+      font-size: 13px;
+      font-weight: 700;
+      margin-right: 10px;
+      flex-shrink: 0;
+    }
+    .notes-section-card .sec-header {
+      display: flex;
+      align-items: center;
+      margin-bottom: 12px;
+    }
+    .notes-section-card .sec-title {
+      font-family: 'Inter', sans-serif;
+      font-size: 16px;
+      font-weight: 700;
+      color: #fff;
+      letter-spacing: -.01em;
+    }
+    .notes-section-card .sec-body {
+      font-size: 14.5px;
+      line-height: 1.85;
+      color: #cbd5e1;
+    }
+    .notes-section-card .key-points {
+      margin-top: 12px;
+      padding: 10px 16px;
+      background: rgba(108, 99, 255, 0.08);
+      border-left: 3px solid var(--accent);
+      border-radius: 0 8px 8px 0;
+    }
+    .notes-section-card .key-points .kp-label {
+      font-family: 'Inter', sans-serif;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+      color: var(--accent);
+      font-weight: 700;
+      margin-bottom: 6px;
+    }
+    .notes-section-card .key-points ul {
+      margin: 0;
+      padding-left: 18px;
+      font-size: 13px;
+      line-height: 1.75;
+      color: #d1d5db;
+    }
+    .notes-section-card .key-points li { margin-bottom: 4px; }
+    .notes-section-card img {
+      margin-top: 14px;
+      max-width: 100%;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: var(--bg);
+    }
+    .notes-divider {
+      border: none;
+      border-top: 1px dashed var(--border);
+      margin: 28px 0;
+    }
+    .notes-formulas {
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 18px 22px;
+      margin: 24px 0 16px;
+    }
+    .notes-formulas .formulas-title {
+      font-family: 'Inter', sans-serif;
+      font-size: 13px;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+      color: var(--accent2);
+      font-weight: 700;
+      margin-bottom: 12px;
+    }
+    .notes-formulas .formula-row {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 13px;
+      padding: 8px 12px;
+      background: var(--bg);
+      border-radius: 6px;
+      margin-bottom: 8px;
+      color: #f1f5f9;
+      overflow-x: auto;
+    }
+    .notes-qa {
+      margin-top: 20px;
+    }
+    .notes-qa .qa-title {
+      font-family: 'Inter', sans-serif;
+      font-size: 13px;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+      color: var(--warn);
+      font-weight: 700;
+      margin-bottom: 12px;
+    }
+    .notes-qa .qa-card {
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 14px 18px;
+      margin-bottom: 10px;
+    }
+    .notes-qa .qa-q {
+      font-family: 'Inter', sans-serif;
+      font-weight: 600;
+      color: #fff;
+      font-size: 13.5px;
+      margin-bottom: 6px;
+    }
+    .notes-qa .qa-a {
+      font-size: 13px;
+      color: #cbd5e1;
+      line-height: 1.7;
+    }
+    .notes-qa .qa-a img {
+      margin-top: 10px;
+      max-width: 100%;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+    }
+    .textbook-btn {
+      background: linear-gradient(135deg, var(--accent), var(--accent2)) !important;
+      color: #fff !important;
+      border: none !important;
+      padding: 8px 18px !important;
+      border-radius: 8px !important;
+      font-size: 13px !important;
+      font-weight: 600 !important;
+      cursor: pointer;
+      transition: all .2s;
+      font-family: 'Inter', sans-serif;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .textbook-btn:hover { filter: brightness(1.15); transform: translateY(-1px); }
+
+    /* ── Modal ─────────────────────────────────────────────────────── */
+    .nv-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,.78);
+      z-index: 9999;
+      overflow-y: auto;
+      padding: 30px 16px;
+      backdrop-filter: blur(4px);
+    }
+    .nv-overlay.active { display: block; }
+    .nv-overlay .nv-modal {
+      max-width: 820px;
+      margin: 0 auto;
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      overflow: hidden;
+      box-shadow: 0 24px 80px rgba(0,0,0,.5);
+    }
+    .nv-overlay .nv-toolbar {
+      display: flex;
+      align-items: center;
+      padding: 14px 20px;
+      background: var(--bg3);
+      border-bottom: 1px solid var(--border);
+      gap: 12px;
+    }
+    .nv-overlay .nv-toolbar .nv-title {
+      font-family: 'Inter', sans-serif;
+      font-size: 15px;
+      font-weight: 700;
+      color: #fff;
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .nv-overlay .nv-body {
+      padding: 28px 32px 40px;
+      font-family: 'Georgia', 'Times New Roman', serif;
+      font-size: 15px;
+      line-height: 1.9;
+      color: #e2e8f0;
+    }
+    .nv-overlay .nv-close {
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      color: var(--text);
+      width: 34px; height: 34px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 18px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all .15s;
+    }
+    .nv-overlay .nv-close:hover { border-color: var(--danger); color: var(--danger); }
+    .nv-overlay .nv-print {
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 6px 14px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-family: 'Inter', sans-serif;
+      font-size: 12px;
+      font-weight: 600;
+      transition: all .15s;
+    }
+    .nv-overlay .nv-print:hover { border-color: var(--accent); color: var(--accent); }
+
+    /* Light theme for textbook modal when printed / reading */
+    @media print {
+      body * { visibility: hidden; }
+      .nv-overlay, .nv-overlay * { visibility: visible; }
+      .nv-overlay { position: absolute; background: #fff; padding: 0; }
+      .nv-overlay .nv-modal { box-shadow: none; border: none; max-width: 100%; }
+      .nv-overlay .nv-body { color: #000; }
+      .nv-toolbar { display: none !important; }
+    }
   </style>
 </head>
 <body>
@@ -243,43 +512,52 @@
 <div class="container">
 
   <!-- Stats row -->
-  <div class="stats-grid">
-    <div class="stat-card">
-      <div class="label">Status</div>
-      <div class="value" id="statStatus" style="font-size:22px;margin-top:10px;">—</div>
-      <div class="glow" style="background:var(--accent);"></div>
-    </div>
-    <div class="stat-card">
-      <div class="label">Total Pending</div>
-      <div class="value" id="statPending">—</div>
-      <div class="sub">across all subjects</div>
-      <div class="glow" style="background:var(--warn);"></div>
-    </div>
-    <div class="stat-card">
-      <div class="label">Done This Run</div>
-      <div class="value" id="statDone">—</div>
-      <div class="sub" id="statDoneSub">questions generated</div>
-      <div class="glow" style="background:var(--accent2);"></div>
-    </div>
-    <div class="stat-card">
-      <div class="label">Failed</div>
-      <div class="value" id="statFailed" style="color:var(--danger);">—</div>
-      <div class="sub">in database (all runs)</div>
-      <div class="glow" style="background:var(--danger);"></div>
-    </div>
-    <div class="stat-card">
-      <div class="label">Media Issues</div>
-      <div class="value" id="statMediaIssues" style="color:var(--warn);">—</div>
-      <div class="sub" id="statMediaSub">done rows missing img/audio</div>
-      <div class="glow" style="background:var(--warn);"></div>
-    </div>
-    <div class="stat-card">
-      <div class="label">Speed</div>
-      <div class="value" id="statSpeed" style="font-size:24px;">—</div>
-      <div class="sub">questions / min</div>
-      <div class="glow" style="background:var(--accent);"></div>
-    </div>
+  <div style="display:flex;gap:12px;margin-bottom:20px;">
+    <button class="btn btn-primary" id="tabPregen" onclick="switchTab('pregen')" style="flex:1;justify-content:center;">⚡ Pre-Generation</button>
+    <button class="btn btn-ghost" id="tabNotes" onclick="switchTab('notes')" style="flex:1;justify-content:center;">📝 Notes</button>
   </div>
+
+  <!-- ═══════════════════════════════════════════════════════════════════════════ -->
+  <!-- PREGEN PANEL                                                               -->
+  <!-- ═══════════════════════════════════════════════════════════════════════════ -->
+  <div id="pregenPanel">
+    <div class="stats-grid">
+      <div class="stat-card">
+        <div class="label">Status</div>
+        <div class="value" id="statStatus" style="font-size:22px;margin-top:10px;">—</div>
+        <div class="glow" style="background:var(--accent);"></div>
+      </div>
+      <div class="stat-card">
+        <div class="label">Total Pending</div>
+        <div class="value" id="statPending">—</div>
+        <div class="sub">across all subjects</div>
+        <div class="glow" style="background:var(--warn);"></div>
+      </div>
+      <div class="stat-card">
+        <div class="label">Done This Run</div>
+        <div class="value" id="statDone">—</div>
+        <div class="sub" id="statDoneSub">questions generated</div>
+        <div class="glow" style="background:var(--accent2);"></div>
+      </div>
+      <div class="stat-card">
+        <div class="label">Failed</div>
+        <div class="value" id="statFailed" style="color:var(--danger);">—</div>
+        <div class="sub">in database (all runs)</div>
+        <div class="glow" style="background:var(--danger);"></div>
+      </div>
+      <div class="stat-card">
+        <div class="label">Media Issues</div>
+        <div class="value" id="statMediaIssues" style="color:var(--warn);">—</div>
+        <div class="sub" id="statMediaSub">done rows missing img/audio</div>
+        <div class="glow" style="background:var(--warn);"></div>
+      </div>
+      <div class="stat-card">
+        <div class="label">Speed</div>
+        <div class="value" id="statSpeed" style="font-size:24px;">—</div>
+        <div class="sub">questions / min</div>
+        <div class="glow" style="background:var(--accent);"></div>
+      </div>
+    </div>
 
   <!-- Control panel -->
   <div class="section">
@@ -453,6 +731,7 @@
     </div>
   </div>
 
+
   <!-- Manual Question Add -->
   <div class="section">
     <div class="section-header"><span>✏️</span><h2>Add Question Manually</h2></div>
@@ -583,7 +862,248 @@
     </div>
   </div>
 
-</div>
+  </div> <!-- /pregenPanel -->
+
+  <!-- ═══════════════════════════════════════════════════════════════════════════ -->
+  <!-- NOTES PANEL                                                               -->
+  <!-- ═══════════════════════════════════════════════════════════════════════════ -->
+  <div id="notesPanel" style="display:none;">
+
+    <!-- JSON Import Section -->
+    <div class="section" id="jsonImportSection">
+      <div class="section-header"><span>📦</span><h2>Import JSON Document</h2><span style="margin-left:auto;font-size:11px;color:var(--muted);">Notes-only pipeline</span></div>
+      <div class="section-body">
+        <div class="controls" style="flex-wrap:wrap;align-items:flex-start;gap:16px;">
+          <div class="field" style="max-width:320px;">
+            <label>Select JSON File</label>
+            <input id="jsonImportFile" type="file" accept=".json"
+              style="background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:8px 12px;color:var(--text);font-size:13px;cursor:pointer;"
+              onchange="previewJsonImport(this)" />
+          </div>
+          <button class="btn btn-success" id="btnJsonImport" onclick="submitJsonImport()" disabled style="align-self:flex-end;">🚀 Import &amp; Generate Notes</button>
+          <button class="btn btn-ghost" onclick="clearJsonImport()" style="align-self:flex-end;">✕ Clear</button>
+        </div>
+        <div id="jsonImportPreview" style="display:none;margin-top:16px;background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:16px;">
+          <div style="font-size:12px;font-weight:600;color:var(--accent);margin-bottom:10px;text-transform:uppercase;letter-spacing:.06em;">Preview</div>
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;font-size:13px;">
+            <div><span style="color:var(--muted);">Subject:</span> <strong id="jpSubject">—</strong></div>
+            <div><span style="color:var(--muted);">Chapter:</span> <strong id="jpChapter">—</strong></div>
+            <div><span style="color:var(--muted);">Topic:</span> <strong id="jpTopic">—</strong></div>
+            <div><span style="color:var(--muted);">Document:</span> <strong id="jpDoc">—</strong></div>
+            <div><span style="color:var(--muted);">Questions:</span> <strong id="jpQuestions" style="color:var(--accent2);">0</strong></div>
+            <div><span style="color:var(--muted);">Images:</span> <strong id="jpImages" style="color:var(--accent2);">0</strong></div>
+            <div><span style="color:var(--muted);">Markdown:</span> <strong id="jpMarkdown">0 chars</strong></div>
+          </div>
+        </div>
+        <div id="jsonImportResult" style="margin-top:12px;font-size:13px;color:var(--muted);"></div>
+      </div>
+    </div>
+
+    <!-- Notes Generation Batch -->
+    <div class="section" id="notesBatchSection">
+      <div class="section-header"><span>📋</span><h2>Notes Generation Batch</h2><span style="margin-left:auto;font-size:11px;color:var(--muted);">Subject-wise batch</span></div>
+      <div class="section-body">
+        <div class="controls" style="align-items:flex-end;flex-wrap:wrap;">
+          <div class="field" style="max-width:260px;">
+            <label>Subject</label>
+            <select id="notesBatchSubject"><option value="">— All subjects —</option></select>
+          </div>
+          <div class="field" style="max-width:140px;">
+            <label>Delay between docs (ms)</label>
+            <input id="notesBatchDelay" type="number" value="2000" min="500" max="30000" />
+          </div>
+          <button class="btn btn-primary" id="btnNotesBatchStart" onclick="startNotesBatch()">▶ Start Batch</button>
+          <button class="btn btn-danger" id="btnNotesBatchStop" onclick="stopNotesBatch()" disabled>⏸ Stop</button>
+          <button class="btn btn-ghost" onclick="loadNotesBatchStatus()">↻ Refresh</button>
+        </div>
+        <div id="notesBatchStats" style="display:none;margin-top:16px;background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:14px;">
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;font-size:13px;text-align:center;">
+            <div><div style="color:var(--muted);font-size:11px;text-transform:uppercase;">Total Docs</div><div id="nbTotalDocs" style="font-size:22px;font-weight:700;font-family:'JetBrains Mono',monospace;">0</div></div>
+            <div><div style="color:var(--muted);font-size:11px;text-transform:uppercase;">Topics Done</div><div id="nbTopicsDone" style="font-size:22px;font-weight:700;color:var(--accent2);font-family:'JetBrains Mono',monospace;">0</div></div>
+            <div><div style="color:var(--muted);font-size:11px;text-transform:uppercase;">Pending</div><div id="nbTopicsPending" style="font-size:22px;font-weight:700;color:var(--warn);font-family:'JetBrains Mono',monospace;">0</div></div>
+            <div><div style="color:var(--muted);font-size:11px;text-transform:uppercase;">Failed</div><div id="nbTopicsFailed" style="font-size:22px;font-weight:700;color:var(--danger);font-family:'JetBrains Mono',monospace;">0</div></div>
+            <div><div style="color:var(--muted);font-size:11px;text-transform:uppercase;">Progress</div><div id="nbBatchProgress" style="font-size:22px;font-weight:700;color:var(--accent);font-family:'JetBrains Mono',monospace;">—</div></div>
+          </div>
+          <div class="progress-track" style="margin-top:10px;"><div class="progress-fill" id="nbProgressFill" style="width:0%"></div></div>
+        </div>
+        <div id="notesBatchLog" style="margin-top:10px;font-size:12px;color:var(--muted);max-height:100px;overflow-y:auto;font-family:'JetBrains Mono',monospace;background:var(--bg3);padding:10px;border-radius:8px;display:none;"></div>
+        <div style="margin-top:14px;overflow-x:auto;">
+          <table style="width:100%;border-collapse:collapse;font-size:13px;">
+            <thead><tr style="border-bottom:1px solid var(--border);">
+              <th style="text-align:left;padding:7px 6px;color:var(--muted);font-weight:600;">Title</th>
+              <th style="text-align:left;padding:7px 6px;color:var(--muted);font-weight:600;">Subject</th>
+              <th style="text-align:center;padding:7px 6px;color:var(--muted);font-weight:600;">Topics</th>
+              <th style="text-align:center;padding:7px 6px;color:var(--muted);font-weight:600;">Done</th>
+              <th style="text-align:center;padding:7px 6px;color:var(--muted);font-weight:600;">Pending</th>
+              <th style="text-align:center;padding:7px 6px;color:var(--muted);font-weight:600;">Failed</th>
+              <th style="text-align:center;padding:7px 6px;color:var(--muted);font-weight:600;">Status</th>
+              <th style="text-align:center;padding:7px 6px;color:var(--muted);font-weight:600;">Action</th>
+            </tr></thead>
+            <tbody id="notesBatchTable"><tr><td colspan="8" style="text-align:center;padding:20px;color:var(--muted);">Click "Refresh" to load documents.</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- Notes Stats -->
+    <div class="stats-grid">
+      <div class="stat-card">
+        <div class="label">Notes Status</div>
+        <div class="value" id="notesStatStatus" style="font-size:22px;margin-top:10px;">—</div>
+        <div class="glow" style="background:var(--accent);"></div>
+      </div>
+      <div class="stat-card">
+        <div class="label">Documents with Notes</div>
+        <div class="value" id="notesStatDocs">—</div>
+        <div class="sub">total tracked</div>
+        <div class="glow" style="background:var(--accent2);"></div>
+      </div>
+      <div class="stat-card">
+        <div class="label">Topics Done</div>
+        <div class="value" id="notesStatTopicsDone">—</div>
+        <div class="sub">across all docs</div>
+        <div class="glow" style="background:var(--accent2);"></div>
+      </div>
+      <div class="stat-card">
+        <div class="label">Topics Pending</div>
+        <div class="value" id="notesStatTopicsPending">—</div>
+        <div class="sub">waiting for generation</div>
+        <div class="glow" style="background:var(--warn);"></div>
+      </div>
+      <div class="stat-card">
+        <div class="label">Topics Failed</div>
+        <div class="value" id="notesStatTopicsFailed" style="color:var(--danger);">—</div>
+        <div class="sub">need retry</div>
+        <div class="glow" style="background:var(--danger);"></div>
+      </div>
+    </div>
+
+    <!-- Notes Control -->
+    <div class="section">
+      <div class="section-header">
+        <span>📝</span>
+        <h2>Notes Generator</h2>
+        <div id="notesRunBadge" class="badge badge-idle" style="margin-left:auto;">● Idle</div>
+      </div>
+      <div class="section-body">
+        <div class="controls">
+          <div class="field">
+            <label>Subject</label>
+            <select id="notesSubjectSelect">
+              <option value="">— Select subject —</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Document</label>
+            <select id="notesDocSelect">
+              <option value="">— Select document —</option>
+            </select>
+          </div>
+          <button class="btn btn-success" id="btnNotesGenerate" onclick="startNotesGeneration()">▶ Generate Notes</button>
+          <button class="btn btn-ghost" onclick="loadNotesDocuments()">⟳ Refresh</button>
+        </div>
+
+        <!-- Notes Progress -->
+        <div class="progress-wrap" id="notesProgressWrap" style="display:none;">
+          <div class="progress-label">
+            <span id="notesProgressLabel">Generating notes...</span>
+            <span id="notesProgressPct">0%</span>
+          </div>
+          <div class="progress-track">
+            <div class="progress-fill" id="notesProgressFill" style="width:0%;background:linear-gradient(90deg,var(--accent2),var(--accent));"></div>
+          </div>
+        </div>
+
+        <div class="live-status" id="notesLiveStatus">
+          <div class="live-dot" id="notesLiveDot"></div>
+          <div id="notesLiveText">Select a document and click Generate Notes.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Notes Documents Table -->
+    <div class="section">
+      <div class="section-header">
+        <span>📚</span>
+        <h2>Documents — Notes Status</h2>
+        <button class="btn btn-ghost" style="margin-left:auto;padding:6px 14px;font-size:12px;" onclick="loadNotesDocuments()">Refresh</button>
+      </div>
+      <div class="section-body" style="padding:0;">
+        <table>
+          <thead>
+            <tr>
+              <th>Title</th>
+              <th>Subject</th>
+              <th>Topics</th>
+              <th>Done</th>
+              <th>Pending</th>
+              <th>Failed</th>
+              <th>Status</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="notesDocTable">
+            <tr><td colspan="8" style="text-align:center;padding:24px;color:var(--muted);">Loading...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Notes Topic Detail -->
+    <div class="section">
+      <div class="section-header">
+        <span>🔍</span>
+        <h2>Topic Notes Detail</h2>
+      </div>
+      <div class="section-body">
+        <div class="controls" style="margin-bottom:16px;flex-wrap:wrap;gap:12px;">
+          <div class="field" style="flex:1;min-width:240px;">
+            <label>Topic ID</label>
+            <input id="notesTopicId" type="text" placeholder="Paste topic_id to view notes" />
+          </div>
+          <button class="btn btn-primary" onclick="loadTopicNotes()" style="align-self:flex-end;">📥 Load Notes</button>
+          <button class="textbook-btn" id="btnTextbookView" onclick="openTextbookView()" style="align-self:flex-end;display:none;">📖 Open Textbook View</button>
+        </div>
+        <div id="notesTopicDetail" style="font-size:13px;color:var(--muted);">Enter a topic ID to view generated notes.</div>
+      </div>
+    </div>
+
+    <!-- Textbook View Modal -->
+    <div id="textbookOverlay" class="nv-overlay" onclick="if(event.target===this) closeTextbookView()">
+      <div class="nv-modal">
+        <div class="nv-toolbar">
+          <div class="nv-title" id="nvToolbarTitle">📖 Topic Notes</div>
+          <button class="nv-print" onclick="printTextbook()">🖨 Print / Save PDF</button>
+          <button class="nv-close" onclick="closeTextbookView()" title="Close (Esc)">✕</button>
+        </div>
+        <div class="nv-body" id="textbookBody"></div>
+      </div>
+    </div>
+
+    <!-- Retry Failed Notes -->
+    <div class="section">
+      <div class="section-header">
+        <span>🔧</span>
+        <h2>Retry Failed Notes</h2>
+        <div id="notesRetryBadge" class="badge badge-idle" style="margin-left:auto;">● Idle</div>
+      </div>
+      <div class="section-body">
+        <div class="controls">
+          <div class="field">
+            <label>Document</label>
+            <select id="notesRetryDocSelect">
+              <option value="">— Select document —</option>
+            </select>
+          </div>
+          <button class="btn btn-ghost" id="btnNotesRetry" onclick="retryFailedNotes()">↩ Retry Failed</button>
+        </div>
+        <div id="notesRetryResult" style="margin-top:12px;font-size:13px;color:var(--muted);"></div>
+      </div>
+    </div>
+
+  </div> <!-- /notesPanel -->
+
+</div> <!-- /container -->
 
 <script>
   // Auto-detect API base from current page URL (works locally and remotely)
@@ -1410,6 +1930,8 @@
   (async () => {
     autoDetectBase();
     await loadSubjects();
+    // Also populate notes subject dropdown
+    await loadNotesSubjects();
     // Populate the retry subject dropdown from the main subject list
     // (loadSubjects already fills retrySubjectSelect via the selIds array)
     await loadPending();
@@ -1417,6 +1939,766 @@
     // Check if a retry is already running (e.g. after page refresh mid-retry)
     await pollRetryStatus(true);
   })();
+
+  // ════════════════════════════════════════════════════════════════════════════
+  // NOTES PANEL
+  // ════════════════════════════════════════════════════════════════════════════
+
+  // ── Load notes subjects dropdown ────────────────────────────────────────────
+  async function loadNotesSubjects() {
+    try {
+      const r = await fetch(`${API()}/subjects`);
+      const d = await r.json();
+      const sel = document.getElementById('notesSubjectSelect');
+      if (!sel) return;
+      sel.innerHTML = '<option value="">— All subjects —</option>';
+      (d.subjects || []).forEach(s => {
+        const o = document.createElement('option');
+        o.value = s.subject_id;
+        o.textContent = s.name || s.subject_id.slice(0,20);
+        sel.appendChild(o);
+      });
+      // Reload table on change
+      sel.onchange = () => loadNotesDocuments();
+    } catch (e) {
+      log(`Notes subjects load error: ${e.message}`, 'fail');
+    }
+  }
+  function switchTab(tab) {
+    const pregenPanel = document.getElementById('pregenPanel');
+    const notesPanel  = document.getElementById('notesPanel');
+    const tabPregen   = document.getElementById('tabPregen');
+    const tabNotes    = document.getElementById('tabNotes');
+    if (tab === 'pregen') {
+      pregenPanel.style.display = 'block';
+      notesPanel.style.display  = 'none';
+      tabPregen.className = 'btn btn-primary';
+      tabNotes.className  = 'btn btn-ghost';
+    } else {
+      pregenPanel.style.display = 'none';
+      notesPanel.style.display  = 'block';
+      tabPregen.className = 'btn btn-ghost';
+      tabNotes.className  = 'btn btn-primary';
+      // Auto-load docs when switching to notes tab
+      loadNotesDocuments();
+    }
+  }
+
+  // ── Load notes documents (filter by subject) ─────────────────────────────────
+  async function loadNotesDocuments() {
+    try {
+      const subjectId = document.getElementById('notesSubjectSelect').value;
+      const url = subjectId
+        ? `${API()}/notes/documents?subject_id=${encodeURIComponent(subjectId)}&import_source=json_import`
+        : `${API()}/notes/documents?import_source=json_import`;
+      const r = await fetch(url);
+      const d = await r.json();
+      const docs = d.documents || [];
+
+      // Update subject dropdown
+      const subjSel = document.getElementById('notesSubjectSelect');
+      if (subjSel.options.length <= 1) {
+        const subjR = await fetch(`${API()}/subjects`);
+        const subjD = await subjR.json();
+        subjSel.innerHTML = '<option value="">— All subjects —</option>';
+        (subjD.subjects || []).forEach(s => {
+          const o = document.createElement('option');
+          o.value = s.subject_id;
+          o.textContent = s.name || s.subject_id.slice(0,20);
+          subjSel.appendChild(o);
+        });
+      }
+
+      // Update doc dropdowns
+      const docSel = document.getElementById('notesDocSelect');
+      const retryDocSel = document.getElementById('notesRetryDocSelect');
+      docSel.innerHTML = '<option value="">— Select document —</option>';
+      retryDocSel.innerHTML = '<option value="">— Select document —</option>';
+      docs.forEach(doc => {
+        const label = `${doc.title || doc.id.slice(0,8)} (${doc.topics_done}/${doc.topics_total} topics)`;
+        docSel.appendChild(new Option(label, doc.id));
+        retryDocSel.appendChild(new Option(label, doc.id));
+      });
+
+      // Update table
+      const tbody = document.getElementById('notesDocTable');
+      if (!docs.length) {
+        tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:24px;color:var(--muted);">No documents with notes yet — upload a document to generate notes.</td></tr>';
+      } else {
+        tbody.innerHTML = docs.map(doc => {
+          const statusBadge = doc.status === 'done'
+            ? '<span class="badge badge-done">✓ Done</span>'
+            : doc.status === 'failed'
+              ? '<span class="badge badge-failed">✗ Failed</span>'
+              : doc.status === 'notes_generating'
+                ? '<span class="badge badge-running">● Generating</span>'
+                : `<span class="badge badge-idle">${doc.status || 'pending'}</span>`;
+          return `<tr>
+            <td>${doc.title || '<em style="color:var(--muted)">untitled</em>'}</td>
+            <td class="mono">${doc.subject_id || '—'}</td>
+            <td style="font-weight:700;">${doc.topics_total ?? 0}</td>
+            <td style="color:var(--accent2);">${doc.topics_done ?? 0}</td>
+            <td style="color:var(--warn);">${doc.topics_pending ?? 0}</td>
+            <td style="color:var(--danger);">${doc.topics_failed ?? 0}</td>
+            <td>${statusBadge}</td>
+            <td>
+              <button class="btn btn-ghost" style="padding:4px 10px;font-size:11px;"
+                onclick="viewNotesForDoc('${doc.id}')">📖 View</button>
+              ${doc.topics_failed > 0
+                ? `<button class="btn btn-ghost" style="padding:4px 10px;font-size:11px;margin-left:4px;"
+                    onclick="retryDocNotes('${doc.id}')">↩ Retry</button>`
+                : ''}
+            </td>
+          </tr>`;
+        }).join('');
+      }
+
+      // Update aggregate stats
+      const totalDocs = docs.length;
+      const totalDone = docs.reduce((s, d) => s + (d.topics_done || 0), 0);
+      const totalPending = docs.reduce((s, d) => s + (d.topics_pending || 0), 0);
+      const totalFailed = docs.reduce((s, d) => s + (d.topics_failed || 0), 0);
+      document.getElementById('notesStatDocs').textContent = totalDocs;
+      document.getElementById('notesStatTopicsDone').textContent = totalDone;
+      document.getElementById('notesStatTopicsPending').textContent = totalPending;
+      document.getElementById('notesStatTopicsFailed').textContent = totalFailed;
+      document.getElementById('notesStatTopicsFailed').style.color = totalFailed > 0 ? 'var(--danger)' : 'var(--accent2)';
+
+      const inProgress = docs.some(d => d.status === 'notes_generating');
+      const statusBadge = document.getElementById('notesRunBadge');
+      if (inProgress) {
+        statusBadge.className = 'badge badge-running';
+        statusBadge.textContent = '● Generating';
+        document.getElementById('notesStatStatus').innerHTML = '<span class="badge badge-running" style="font-size:14px;">● Generating</span>';
+        setTimeout(loadNotesDocuments, 3000);
+      } else {
+        statusBadge.className = totalFailed > 0 ? 'badge badge-failed' : 'badge badge-done';
+        statusBadge.textContent = totalFailed > 0 ? `⚠ ${totalFailed} failed` : '✓ Idle';
+        document.getElementById('notesStatStatus').innerHTML = totalFailed > 0
+          ? '<span class="badge badge-failed" style="font-size:14px;">⚠ Issues</span>'
+          : '<span class="badge badge-idle" style="font-size:14px;">● Ready</span>';
+      }
+
+      log(`Notes: ${totalDocs} docs, ${totalDone} done, ${totalPending} pending, ${totalFailed} failed`, 'ok');
+    } catch (e) {
+      log(`Notes load error: ${e.message}`, 'fail');
+    }
+  }
+
+  // ── Start notes generation ───────────────────────────────────────────────────
+  async function startNotesGeneration() {
+    const docId = document.getElementById('notesDocSelect').value;
+    if (!docId) { alert('Select a document first.'); return; }
+    log(`Starting notes generation for doc=${docId.slice(0,8)}…`, 'info');
+    document.getElementById('btnNotesGenerate').disabled = true;
+    document.getElementById('notesLiveText').textContent = 'Queuing notes generation...';
+    document.getElementById('notesLiveDot').className = 'live-dot running';
+    try {
+      const r = await fetch(`${API()}/notes/generate/${docId}`, { method: 'POST' });
+      const d = await r.json();
+      if (r.ok) {
+        log(`Notes queued: ${d.message || 'OK'}`, 'ok');
+        document.getElementById('notesLiveText').textContent = 'Generation queued — refreshing list...';
+        document.getElementById('notesProgressWrap').style.display = 'block';
+        document.getElementById('notesProgressFill').style.width = '15%';
+        document.getElementById('notesProgressLabel').textContent = 'Queued — waiting for worker...';
+        setTimeout(() => {
+          document.getElementById('btnNotesGenerate').disabled = false;
+          loadNotesDocuments();
+        }, 2000);
+      } else {
+        log(`Notes generate failed: ${d.detail || JSON.stringify(d)}`, 'fail');
+        document.getElementById('notesLiveText').textContent = `✗ ${d.detail || 'Failed'}`;
+        document.getElementById('notesLiveDot').className = 'live-dot failed';
+        document.getElementById('btnNotesGenerate').disabled = false;
+      }
+    } catch (e) {
+      log(`Notes generate error: ${e.message}`, 'fail');
+      document.getElementById('notesLiveText').textContent = `✗ ${e.message}`;
+      document.getElementById('notesLiveDot').className = 'live-dot failed';
+      document.getElementById('btnNotesGenerate').disabled = false;
+    }
+  }
+
+  // ── View notes for a document (lists topics + sections) ─────────────────────
+  async function viewNotesForDoc(docId) {
+    log(`Loading notes for doc=${docId.slice(0,8)}…`, 'info');
+    try {
+      const r = await fetch(`${API()}/notes/document/${docId}`);
+      const d = await r.json();
+      const notes = d.notes || d.topic_notes || [];
+      if (!notes.length) {
+        log(`No notes found for doc=${docId.slice(0,8)}`, 'warn');
+        return;
+      }
+      // Populate topic detail section with the first topic's data
+      const first = notes[0];
+      document.getElementById('notesTopicId').value = first.topic_id || first.id || '';
+      loadTopicNotes();
+      log(`Loaded ${notes.length} topic(s) for doc=${docId.slice(0,8)}`, 'ok');
+    } catch (e) {
+      log(`Notes view error: ${e.message}`, 'fail');
+    }
+  }
+
+  // ── Load notes for a specific topic ─────────────────────────────────────────
+  async function loadTopicNotes() {
+    const topicId = document.getElementById('notesTopicId').value.trim();
+    const el = document.getElementById('notesTopicDetail');
+    if (!topicId) { el.innerHTML = '<span style="color:var(--warn)">⚠ Enter a topic ID.</span>'; return; }
+    el.innerHTML = '<span style="color:var(--muted)">Loading...</span>';
+    try {
+      const r = await fetch(`${API()}/notes/topic/${topicId}`);
+      const d = await r.json();
+      if (!r.ok || d.error) {
+        el.innerHTML = `<span style="color:var(--danger)">✗ ${d.error || d.detail || 'Not found'}</span>`;
+        return;
+      }
+
+      // Support both old string-list and new {url, local_path} shapes
+      const rawImgs = d.note_images || d.note_image_urls || [];
+      const images = rawImgs.map(img => {
+        if (typeof img === 'string') return { url: img, local_path: '' };
+        return { url: img.url || '', local_path: img.local_path || '' };
+      });
+
+      const sections = d.note_sections || [];
+      const formulas = d.note_latex_formulas || d.latex_formulas || d.formulas || [];
+      const qa       = d.question_answers || [];
+      const ansImgs  = d.answer_images || [];
+
+      const statusBadge = d.status === 'done'
+        ? '<span class="badge badge-done">✓ Done</span>'
+        : d.status === 'failed'
+          ? `<span class="badge badge-failed">✗ Failed</span>`
+          : `<span class="badge badge-running">${d.status || 'pending'}</span>`;
+
+      // Show/hide textbook button
+      const tbBtn = document.getElementById('btnTextbookView');
+      if (sections.length) {
+        tbBtn.style.display = 'inline-flex';
+      } else {
+        tbBtn.style.display = 'none';
+      }
+
+      // Save raw data on the container so the modal can read it
+      el.dataset._nv = JSON.stringify({ d, images });
+
+      const esc = s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+
+      el.innerHTML = `
+        <div style="margin-bottom:14px;">
+          ${statusBadge}
+          <span style="color:var(--muted);margin-left:12px;font-size:12px;">
+            ${d.document_title ? '📄 ' + esc(d.document_title) : ''}
+            ${d.status === 'done' ? '• ' + sections.length + ' sections • ' + formulas.length + ' formulas • ' + images.length + ' images' : ''}
+          </span>
+        </div>
+        <div class="notes-viewer">
+          <div class="notes-meta">
+            <span class="nv-badge">📋 ${sections.length} sections</span>
+            <span class="nv-badge">🧮 ${formulas.length} formulas</span>
+            <span class="nv-badge">🖼 ${images.length} images</span>
+            <span class="nv-badge">❓ ${qa.length} Q&A</span>
+            ${d.generated_at ? `<span class="nv-badge">🕒 ${d.generated_at?.slice(0,19).replace('T',' ')}</span>` : ''}
+          </div>
+          ${sections.map((sec, i) => {
+            const heading = esc(sec.heading || sec.title || 'Section ' + (i+1));
+            const body    = esc(sec.explanation || sec.content || '').replace(/\n/g, '<br>');
+            const secImgs = (sec.images || sec.image_urls || []);
+            const kp      = sec.key_points || [];
+            return `
+            <div class="notes-section-card">
+              <div class="sec-header">
+                <span class="sec-num">${i+1}</span>
+                <span class="sec-title">${heading}</span>
+              </div>
+              <div class="sec-body">${body || '<span style="color:var(--muted)">(no explanation)</span>'}</div>
+              ${secImgs.map((si, j) => {
+                const su = typeof si === 'string' ? si : si.url || '';
+                const sp = typeof si === 'object' ? (si.local_path || '') : '';
+                const src = sp || su;
+                return src ? `<img src="${esc(src)}" alt="Section image" onerror="this.style.display='none'" loading="lazy" />` : '';
+              }).join('')}
+              ${(images.length && secImgs.length === 0) ? `
+                <div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:14px;">
+                  ${images.map((img, j) => `<img src="${esc(img.local_path || img.url)}" alt="Note image" onerror="this.style.display='none'" loading="lazy" style="max-width:260px;" />`).join('')}
+                </div>` : ''}
+              ${kp.length ? `
+              <div class="key-points">
+                <div class="kp-label">📌 Key Points</div>
+                <ul>${kp.map(p => `<li>${esc(p)}</li>`).join('')}</ul>
+              </div>` : ''}
+            </div>
+            ${i < sections.length - 1 ? '<hr class="notes-divider">' : ''}`;
+          }).join('')}
+          ${formulas.length ? `
+          <div class="notes-formulas">
+            <div class="formulas-title">🧮 Key Formulas</div>
+            ${formulas.map(f => `<div class="formula-row">${esc(f.latex || f.formula || JSON.stringify(f))}</div>`).join('')}
+          </div>` : ''}
+          ${qa.length ? `
+          <div class="notes-qa">
+            <div class="qa-title">❓ Question Answers (${qa.length})</div>
+            ${qa.map((q, i) => {
+              const qText = esc(q.question || q.question_text || 'Q');
+              const aText = esc(q.answer || q.answer_text || '').replace(/\n/g, '<br>');
+              const answerImg = ansImgs[i];
+              const answerImgUrl = answerImg
+                ? (typeof answerImg === 'string' ? answerImg : (answerImg.url || answerImg.local_path || ''))
+                : '';
+              return `
+              <div class="qa-card">
+                <div class="qa-q">${i+1}. ${qText}</div>
+                <div class="qa-a">${aText || '<span style="color:var(--muted)">(no answer)</span>'}</div>
+                ${answerImgUrl ? `<img src="${esc(answerImgUrl)}" alt="Answer diagram" onerror="this.style.display='none'" loading="lazy" style="max-width:320px;" />` : ''}
+              </div>`;
+            }).join('')}
+          </div>` : ''}
+        </div>
+      `;
+      log(`Loaded topic notes: ${sections.length} sections, ${formulas.length} formulas, ${images.length} images, ${qa.length} Q&A`, 'ok');
+    } catch (e) {
+      el.innerHTML = `<span style="color:var(--danger)">✗ ${e.message}</span>`;
+      log(`Topic notes error: ${e.message}`, 'fail');
+    }
+  }
+
+  // ── Textbook Modal ────────────────────────────────────────────────────────────
+  function openTextbookView() {
+    const overlay = document.getElementById('textbookOverlay');
+    const body    = document.getElementById('notesTopicDetail');
+    const raw     = body.dataset._nv || '{}';
+    const data    = JSON.parse(raw);
+    const d       = data.d;
+    const images  = data.images || [];
+    const topicId = document.getElementById('notesTopicId').value.trim();
+
+    document.getElementById('nvToolbarTitle').textContent =
+      `📖 ${d.document_title || 'Topic'} — ${d.note_sections?.length || 0} sections`;
+
+    // Build a clean, light-accented textbook layout
+    const esc = s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    const sections = d.note_sections || [];
+    const formulas = d.note_latex_formulas || d.latex_formulas || d.formulas || [];
+    const qa       = d.question_answers || [];
+    const ansImgs  = d.answer_images || [];
+
+    const md = (text) => {
+      const t = esc(text).replace(/\n/g, '<br>');
+      return t;
+    };
+
+    let html = '';
+
+    // Title page
+    html += `<div style="text-align:center;padding:40px 0 30px;">
+      <div style="font-size:11px;text-transform:uppercase;letter-spacing:.15em;color:#8b5cf6;margin-bottom:10px;font-family:Inter,sans-serif;">Generated Notes</div>
+      <h1 style="font-size:26px;font-weight:700;color:#1a1a2e;margin-bottom:8px;line-height:1.35;">${esc(d.document_title || 'Topic Notes')}</h1>
+      <div style="font-size:13px;color:#6b7280;">${sections.length} sections · ${formulas.length} formulas · ${qa.length} Q&A · ${images.length} illustrations</div>
+      ${d.generated_at ? `<div style="font-size:12px;color:#9ca3af;margin-top:4px;">Generated ${d.generated_at?.slice(0,19).replace('T',' at ')}</div>` : ''}
+    </div>
+    <hr style="border:none;border-top:2px solid #e5e7eb;margin:0 0 32px;">`;
+
+    sections.forEach((sec, i) => {
+      const heading = esc(sec.heading || sec.title || 'Section ' + (i+1));
+      const body    = md(sec.explanation || sec.content || '');
+      const secImgs = (sec.images || sec.image_urls || []);
+      const kp      = sec.key_points || [];
+      html += `
+      <div style="margin-bottom:36px;">
+        <h2 style="font-size:20px;font-weight:700;color:#1e293b;margin-bottom:14px;padding-bottom:8px;border-bottom:2px solid #6366f1;display:flex;align-items:center;gap:10px;">
+          <span style="display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;background:linear-gradient(135deg,#6366f1,#06b6d4);color:#fff;border-radius:50%;font-size:14px;font-weight:800;flex-shrink:0;">${i+1}</span>
+          ${heading}
+        </h2>
+        <p style="margin:0 0 14px;line-height:1.9;font-size:15px;color:#334155;">${body || '<em style="color:#9ca3af">(no content)</em>'}</p>`;
+
+      // Images associated with this section (or global fallback on first section)
+      const showImgs = secImgs.length ? secImgs : (i === 0 ? images : []);
+      if (showImgs.length) {
+        html += `<div style="display:flex;flex-wrap:wrap;gap:12px;margin-bottom:14px;">`;
+        showImgs.forEach(img => {
+          const src = typeof img === 'string' ? img : (img.local_path || img.url || '');
+          if (src) html += `<img src="${esc(src)}" alt="${esc(heading)}" onerror="this.parentElement.removeChild(this)" style="max-width:320px;max-height:280px;object-fit:contain;border-radius:8px;border:1px solid #e5e7eb;background:#f9fafb;box-shadow:0 1px 6px rgba(0,0,0,.06);" />`;
+        });
+        html += `</div>`;
+      }
+
+      if (kp.length) {
+        html += `
+        <div style="background:#f5f3ff;border-left:3px solid #6366f1;border-radius:0 8px 8px 0;padding:14px 18px;margin-bottom:4px;">
+          <div style="font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:#6366f1;font-weight:700;margin-bottom:8px;font-family:Inter,sans-serif;">Key Points</div>
+          <ul style="margin:0;padding-left:20px;line-height:1.85;font-size:14px;color:#374151;">${kp.map(p => `<li>${esc(p)}</li>`).join('')}</ul>
+        </div>`;
+      }
+      html += `</div>`;
+      if (i < sections.length - 1) html += `<hr style="border:none;border-top:1px solid #f3f4f6;margin:0 0 36px;">`;
+    });
+
+    if (formulas.length) {
+      html += `
+      <div style="margin:40px 0 0;padding:22px 24px;background:#f8fafc;border:1px solid #e5e7eb;border-radius:10px;">
+        <div style="font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:#059669;font-weight:700;margin-bottom:14px;font-family:Inter,sans-serif;">🧮 Key Formulas</div>
+        ${formulas.map(f => `<div style="font-family:'JetBrains Mono',monospace;font-size:13.5px;padding:10px 14px;background:#fff;border:1px solid #e5e7eb;border-radius:6px;margin-bottom:8px;color:#111827;overflow-x:auto;">${esc(f.latex || f.formula || JSON.stringify(f))}</div>`).join('')}
+      </div>`;
+    }
+
+    if (qa.length) {
+      html += `
+      <div style="margin:40px 0 0;">
+        <div style="font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:#d97706;font-weight:700;margin-bottom:14px;font-family:Inter,sans-serif;">❓ Question &amp; Answers</div>
+        ${qa.map((q, i) => {
+          const qText = esc(q.question || q.question_text || 'Q');
+          const aText = md(q.answer || q.answer_text || '');
+          const aImg  = ansImgs[i];
+          const aImgUrl = aImg ? (typeof aImg === 'string' ? aImg : (aImg.url || aImg.local_path || '')) : '';
+          return `
+          <div style="margin-bottom:16px;padding:18px 20px;background:#fefce8;border:1px solid #fde68a;border-radius:10px;">
+            <div style="font-weight:700;color:#1e293b;font-size:14px;margin-bottom:6px;">Q${i+1}. ${qText}</div>
+            <div style="font-size:14px;color:#374151;line-height:1.8;">${aText || '<span style="color:#9ca3af">(no answer)</span>'}</div>
+            ${aImgUrl ? `<img src="${esc(aImgUrl)}" alt="Diagram" onerror="this.style.display='none'" style="margin-top:10px;max-width:300px;border-radius:6px;border:1px solid #fde68a;" />` : ''}
+          </div>`;
+        }).join('')}
+      </div>`;
+    }
+
+    document.getElementById('textbookBody').innerHTML = html;
+    overlay.classList.add('active');
+    document.body.style.overflow = 'hidden';
+  }
+
+  function closeTextbookView() {
+    document.getElementById('textbookOverlay').classList.remove('active');
+    document.body.style.overflow = '';
+  }
+  function printTextbook() { window.print(); }
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') closeTextbookView(); });
+
+  // ── Retry failed notes for a document ───────────────────────────────────────
+  async function retryDocNotes(docId) {
+    log(`Retrying failed notes for doc=${docId.slice(0,8)}…`, 'info');
+    try {
+      const r = await fetch(`${API()}/notes/retry/${docId}`, { method: 'POST' });
+      const d = await r.json();
+      if (r.ok) {
+        log(`Notes retry queued: ${d.message || 'OK'}`, 'ok');
+        setTimeout(loadNotesDocuments, 2000);
+      } else {
+        log(`Retry failed: ${d.detail || JSON.stringify(d)}`, 'fail');
+      }
+    } catch (e) {
+      log(`Retry error: ${e.message}`, 'fail');
+    }
+  }
+
+  async function retryFailedNotes() {
+    const docId = document.getElementById('notesRetryDocSelect').value;
+    if (!docId) { alert('Select a document first.'); return; }
+    const resultEl = document.getElementById('notesRetryResult');
+    resultEl.innerHTML = '<span style="color:var(--muted)">Retrying...</span>';
+    try {
+      const r = await fetch(`${API()}/notes/retry/${docId}`, { method: 'POST' });
+      const d = await r.json();
+      if (r.ok) {
+        resultEl.innerHTML = `<span style="color:var(--accent2)">✓ ${d.message || 'Retry queued'}</span>`;
+        log(`Retry queued for doc=${docId.slice(0,8)}`, 'ok');
+        setTimeout(loadNotesDocuments, 2000);
+      } else {
+        resultEl.innerHTML = `<span style="color:var(--danger)">✗ ${d.detail || JSON.stringify(d)}</span>`;
+      }
+    } catch (e) {
+      resultEl.innerHTML = `<span style="color:var(--danger)">✗ ${e.message}</span>`;
+    }
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // ── JSON Import Section ───────────────────────────────────────────────────
+  // ══════════════════════════════════════════════════════════════════════════
+
+  let _jsonImportParsed = null;   // holds the parsed JSON payload
+
+  function previewJsonImport(input) {
+    const file = input.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const data = JSON.parse(e.target.result);
+        _jsonImportParsed = data;
+
+        // Populate preview
+        document.getElementById('jpSubject').textContent =
+          (data.subject?.name || '—') + ' (' + (data.subject?.id?.slice(0,8) || '?') + '...)';
+        document.getElementById('jpChapter').textContent =
+          (data.chapter?.chapter_number ? `Ch.${data.chapter.chapter_number} — ` : '') +
+          (data.chapter?.title || '—');
+        document.getElementById('jpTopic').textContent =
+          (data.topic?.topic_number ? `${data.topic.topic_number} — ` : '') +
+          (data.topic?.title || '—');
+        document.getElementById('jpDoc').textContent =
+          data.document?.display_name || '—';
+        document.getElementById('jpQuestions').textContent =
+          (data.questions?.length ?? 0) + ' questions';
+        document.getElementById('jpImages').textContent =
+          Object.keys(data.document?.parsed_json?.images || {}).length + ' images';
+        document.getElementById('jpMarkdown').textContent =
+          (data.document?.parsed_json?.content_markdown?.length ?? 0).toLocaleString() + ' chars';
+
+        document.getElementById('jsonImportPreview').style.display = 'block';
+        document.getElementById('jsonImportResult').innerHTML = '';
+        document.getElementById('btnJsonImport').disabled = false;
+        log('JSON parsed: ' + (data.document?.display_name || file.name), 'ok');
+      } catch (err) {
+        document.getElementById('jsonImportResult').innerHTML =
+          `<span style="color:var(--danger)">✗ Invalid JSON: ${err.message}</span>`;
+        _jsonImportParsed = null;
+        document.getElementById('btnJsonImport').disabled = true;
+        document.getElementById('jsonImportPreview').style.display = 'none';
+      }
+    };
+    reader.readAsText(file);
+  }
+
+  function clearJsonImport() {
+    _jsonImportParsed = null;
+    document.getElementById('jsonImportFile').value = '';
+    document.getElementById('jsonImportPreview').style.display = 'none';
+    document.getElementById('jsonImportResult').innerHTML = '';
+    document.getElementById('btnJsonImport').disabled = true;
+  }
+
+  async function submitJsonImport() {
+    if (!_jsonImportParsed) return;
+    const resultEl = document.getElementById('jsonImportResult');
+    const btn      = document.getElementById('btnJsonImport');
+    btn.disabled   = true;
+    resultEl.innerHTML = '<span style="color:var(--accent)">⏳ Importing...</span>';
+    try {
+      const r = await fetch(`${API()}/documents/import-json`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(_jsonImportParsed),
+      });
+      const d = await r.json();
+      if (r.ok && d.success) {
+        resultEl.innerHTML =
+          `<span style="color:var(--accent2)">✓ Imported! ` +
+          `Doc ID: <code>${d.document_id?.slice(0,8)}...</code> | ` +
+          `${d.questions_imported} questions | ` +
+          `${d.images_resolved} images resolved | ` +
+          `Notes queued in background</span>`;
+        log(`JSON imported: ${d.title} (${d.questions_imported} questions)`, 'ok');
+        clearJsonImport();
+        // Refresh the notes batch table
+        setTimeout(loadNotesBatchStatus, 1500);
+      } else {
+        resultEl.innerHTML =
+          `<span style="color:var(--danger)">✗ ${d.detail || d.message || JSON.stringify(d)}</span>`;
+        btn.disabled = false;
+      }
+    } catch (err) {
+      resultEl.innerHTML = `<span style="color:var(--danger)">✗ ${err.message}</span>`;
+      btn.disabled = false;
+    }
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // ── Notes Batch Section ───────────────────────────────────────────────────
+  // ══════════════════════════════════════════════════════════════════════════
+
+  let _notesBatchRunning = false;
+  let _notesBatchStop    = false;
+  let _notesBatchDocs    = [];
+
+  function _nbLog(msg) {
+    const el = document.getElementById('notesBatchLog');
+    el.style.display = 'block';
+    const ts = new Date().toLocaleTimeString();
+    el.innerHTML += `<div>[${ts}] ${msg}</div>`;
+    el.scrollTop = el.scrollHeight;
+  }
+
+  async function loadNotesBatchStatus() {
+    try {
+      const subjectId = document.getElementById('notesBatchSubject').value;
+
+      // Populate subject dropdown on first load
+      const subjSel = document.getElementById('notesBatchSubject');
+      if (subjSel.options.length <= 1) {
+        try {
+          const sr = await fetch(`${API()}/subjects`);
+          const sd = await sr.json();
+          (sd.subjects || []).forEach(s => {
+            const o = document.createElement('option');
+            o.value = s.subject_id;
+            o.textContent = s.name || s.subject_id.slice(0, 20);
+            subjSel.appendChild(o);
+          });
+        } catch (_) {}
+      }
+
+      const url = subjectId
+        ? `${API()}/notes/documents?subject_id=${encodeURIComponent(subjectId)}&import_source=json_import`
+        : `${API()}/notes/documents?import_source=json_import`;
+      const r = await fetch(url);
+      const d = await r.json();
+      _notesBatchDocs = d.documents || [];
+
+      // Aggregate stats
+      const totalDocs     = _notesBatchDocs.length;
+      const totalDone     = _notesBatchDocs.reduce((s, d) => s + (d.topics_done || 0), 0);
+      const totalPending  = _notesBatchDocs.reduce((s, d) => s + (d.topics_pending || 0), 0);
+      const totalFailed   = _notesBatchDocs.reduce((s, d) => s + (d.topics_failed || 0), 0);
+      const totalTopics   = _notesBatchDocs.reduce((s, d) => s + (d.topics_total || 0), 0);
+      const pct           = totalTopics > 0 ? Math.round((totalDone / totalTopics) * 100) : 0;
+
+      document.getElementById('notesBatchStats').style.display = 'block';
+      document.getElementById('nbTotalDocs').textContent    = totalDocs;
+      document.getElementById('nbTopicsDone').textContent   = totalDone;
+      document.getElementById('nbTopicsPending').textContent = totalPending;
+      document.getElementById('nbTopicsFailed').textContent  = totalFailed;
+      document.getElementById('nbBatchProgress').textContent = `${pct}%`;
+      document.getElementById('nbProgressFill').style.width  = `${pct}%`;
+
+      // Table
+      const tbody = document.getElementById('notesBatchTable');
+      if (!_notesBatchDocs.length) {
+        tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:24px;color:var(--muted);">No documents found for this subject.</td></tr>';
+        return;
+      }
+      tbody.innerHTML = _notesBatchDocs.map(doc => {
+        const statusBadge = doc.topics_total > 0 && doc.topics_done === doc.topics_total
+          ? '<span class="badge badge-done">✓ Done</span>'
+          : doc.topics_generating > 0
+            ? '<span class="badge badge-running">● Running</span>'
+            : doc.topics_failed > 0
+              ? '<span class="badge badge-failed">✗ Partial</span>'
+              : '<span class="badge badge-idle">Pending</span>';
+        return `<tr>
+          <td style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${doc.title || ''}">${doc.title || '<em>untitled</em>'}</td>
+          <td class="mono" style="font-size:11px;">${doc.subject_id?.slice(0,12) || '—'}...</td>
+          <td style="text-align:center;font-weight:700;">${doc.topics_total ?? 0}</td>
+          <td style="text-align:center;color:var(--accent2);">${doc.topics_done ?? 0}</td>
+          <td style="text-align:center;color:var(--warn);">${doc.topics_pending ?? 0}</td>
+          <td style="text-align:center;color:var(--danger);">${doc.topics_failed ?? 0}</td>
+          <td style="text-align:center;">${statusBadge}</td>
+          <td style="text-align:center;">
+            <button class="btn btn-ghost" style="padding:3px 8px;font-size:11px;"
+              onclick="triggerNotesForDoc('${doc.id}')">▶ Run</button>
+            ${doc.topics_failed > 0
+              ? `<button class="btn btn-ghost" style="padding:3px 8px;font-size:11px;margin-left:3px;"
+                   onclick="retryNotesForDoc('${doc.id}')">↩ Retry</button>` : ''}
+          </td>
+        </tr>`;
+      }).join('');
+    } catch (err) {
+      log('Notes batch status error: ' + err.message, 'err');
+    }
+  }
+
+  async function triggerNotesForDoc(docId) {
+    try {
+      const r = await fetch(`${API()}/notes/generate/${docId}`, { method: 'POST' });
+      const d = await r.json();
+      if (r.ok) {
+        _nbLog(`▶ Triggered notes for doc ${docId.slice(0,8)}...`);
+        setTimeout(loadNotesBatchStatus, 1000);
+      } else {
+        _nbLog(`✗ Failed: ${d.detail || JSON.stringify(d)}`);
+      }
+    } catch (err) {
+      _nbLog(`✗ Error: ${err.message}`);
+    }
+  }
+
+  async function retryNotesForDoc(docId) {
+    try {
+      const r = await fetch(`${API()}/notes/retry/${docId}`, { method: 'POST' });
+      const d = await r.json();
+      _nbLog(`↩ Retry queued for doc ${docId.slice(0,8)}: ${d.retried ?? 0} topics reset`);
+      setTimeout(loadNotesBatchStatus, 1000);
+    } catch (err) {
+      _nbLog(`✗ Retry error: ${err.message}`);
+    }
+  }
+
+  // ── Server-side batch controls ─────────────────────────────────────────────
+  let _batchPollTimer = null;
+
+  async function startNotesBatch() {
+    const subjectId = document.getElementById('notesBatchSubject').value;
+    const delay     = parseInt(document.getElementById('notesBatchDelay').value) || 2000;
+
+    try {
+      const r = await fetch(`${API()}/notes/batch/start`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ subject_id: subjectId || null, delay_ms: delay, reset_stuck: true }),
+      });
+      const d = await r.json();
+      if (r.ok && d.success) {
+        _nbLog(`▶ Server batch started: ${d.total} documents queued (${delay}ms delay)`);
+        document.getElementById('btnNotesBatchStart').disabled = true;
+        document.getElementById('btnNotesBatchStop').disabled  = false;
+        _startBatchPoll();
+      } else {
+        _nbLog(`✗ Failed to start batch: ${d.message || JSON.stringify(d)}`);
+      }
+    } catch (err) {
+      _nbLog(`✗ Error starting batch: ${err.message}`);
+    }
+  }
+
+  async function stopNotesBatch() {
+    try {
+      const r = await fetch(`${API()}/notes/batch/stop`, { method: 'POST' });
+      const d = await r.json();
+      _nbLog(`⏸ Stop requested: ${d.message}`);
+      document.getElementById('btnNotesBatchStop').disabled = true;
+    } catch (err) {
+      _nbLog(`✗ Error: ${err.message}`);
+    }
+  }
+
+  function _startBatchPoll() {
+    clearTimeout(_batchPollTimer);
+    _batchPollTimer = setTimeout(_pollBatchStatus, 3000);
+  }
+
+  async function _pollBatchStatus() {
+    try {
+      const r = await fetch(`${API()}/notes/batch/status`);
+      const d = await r.json();
+
+      // Update progress UI
+      document.getElementById('notesBatchStats').style.display = 'block';
+      document.getElementById('nbTotalDocs').textContent    = d.total ?? 0;
+      document.getElementById('nbTopicsDone').textContent   = d.done ?? 0;
+      document.getElementById('nbTopicsFailed').textContent = d.failed ?? 0;
+      document.getElementById('nbTopicsPending').textContent = d.pending ?? 0;
+      const pct = d.progress_pct ?? 0;
+      document.getElementById('nbBatchProgress').textContent = `${pct}%`;
+      document.getElementById('nbProgressFill').style.width  = `${pct}%`;
+
+      if (d.running) {
+        _nbLog(`⟳ [${d.done}/${d.total}] ${d.current_title || 'processing...'}`);
+        document.getElementById('btnNotesBatchStart').disabled = true;
+        document.getElementById('btnNotesBatchStop').disabled  = d.stop_requested;
+        _batchPollTimer = setTimeout(_pollBatchStatus, 3000);
+      } else {
+        // Batch finished
+        _nbLog(`✓ Batch complete — done: ${d.done}, failed: ${d.failed}`);
+        document.getElementById('btnNotesBatchStart').disabled = false;
+        document.getElementById('btnNotesBatchStop').disabled  = true;
+        clearTimeout(_batchPollTimer);
+        // Refresh docs table
+        setTimeout(loadNotesBatchStatus, 1000);
+      }
+    } catch (err) {
+      _nbLog(`✗ Poll error: ${err.message}`);
+    }
+  }
+
 </script>
 </body>
 </html>

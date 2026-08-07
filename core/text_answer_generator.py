@@ -1,29 +1,20 @@
 """
 core/text_answer_generator.py
 ─────────────────────────────
-Generates a rich, educational text answer using OpenRouter FREE models.
+Generates a rich, educational text answer using OpenRouter (OpenAI-compatible API).
 
 Strategy:
   - Course material is used as the PRIMARY source of facts/concepts
   - LLM enriches with natural language explanations (no "according to the document" citations)
   - Output is beautifully structured markdown with optional example + quick_tip fields
 
-Cost: $0.00 — all models below have prompt_price = 0.
+Model: google/gemini-flash-1.5 (fast, cheap, via OpenRouter)
 """
 import os, json, re, httpx
 
-OPENROUTER_BASE = "https://openrouter.ai/api/v1"
-OPENROUTER_KEY  = os.getenv("OPENROUTER_API_KEY", "")
-
-# Free models in priority order (verified free as of 2026-07-24 from OpenRouter API)
-FREE_MODELS = [
-    "nvidia/nemotron-3-ultra-550b-a55b:free",      # NVIDIA Nemotron 3 Ultra 550B — largest free model
-    "google/gemma-4-31b-it:free",                  # Google Gemma 4 31B — strong instruction following
-    "google/gemma-4-26b-a4b-it:free",              # Google Gemma 4 26B — fast alternative
-    "nvidia/nemotron-3-super-120b-a12b:free",      # NVIDIA Nemotron Super 120B
-    "nvidia/nemotron-3-nano-30b-a3b:free",         # NVIDIA Nemotron Nano 30B — final fallback
-    "openrouter/auto",                             # Last resort: OpenRouter auto-selects
-]
+OPENROUTER_URL   = "https://openrouter.ai/api/v1"
+OPENROUTER_KEY   = os.getenv("OPENROUTER_API_KEY", "")
+OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "google/gemini-3.5-flash")
 
 SYSTEM_PROMPT = """\
 You are Professor AI — a brilliant, friendly teacher who makes complex topics simple and exciting.
@@ -72,79 +63,62 @@ def _extract_json(text: str) -> str:
 
 async def generate_text_answer(question: str, context: str) -> dict:
     """
-    Try each free OpenRouter model in order until one returns valid JSON.
+    Call OpenRouter (OpenAI-compatible) to generate a structured educational answer.
     Returns dict: {answer, key_points, example?, quick_tip?}
-    Raises RuntimeError if all models fail.
+    Raises RuntimeError if the call fails.
     """
     if not OPENROUTER_KEY:
         raise RuntimeError("OPENROUTER_API_KEY is not set in .env")
 
     prompt = USER_PROMPT_TEMPLATE.format(question=question, context=context)
-    last_error = None
-    raw_text = ""
 
-    for model in FREE_MODELS:
-        print(f"[TextGen] Trying {model}")
+    max_retries = 2
+    for attempt in range(max_retries + 1):
         try:
+            print(f"[TextGen] Calling OpenRouter ({OPENROUTER_MODEL}){' (Retry ' + str(attempt) + ')' if attempt > 0 else ''}")
             async with httpx.AsyncClient(timeout=90) as client:
                 resp = await client.post(
-                    f"{OPENROUTER_BASE}/chat/completions",
+                    f"{OPENROUTER_URL}/chat/completions",
                     headers={
                         "Authorization": f"Bearer {OPENROUTER_KEY}",
                         "Content-Type": "application/json",
-                        "HTTP-Referer": "https://ai-teaching-api.internal",
-                        "X-Title": "AI Teaching Assistant",
                     },
                     json={
-                        "model": model,
+                        "model": OPENROUTER_MODEL,
+                        "max_tokens": 5000,
+                        "temperature": 0.5,
                         "messages": [
                             {"role": "system", "content": SYSTEM_PROMPT},
                             {"role": "user",   "content": prompt},
                         ],
-                        "temperature": 0.5,
-                        "max_tokens": 900,
                     },
                 )
 
-            if resp.status_code == 429:
-                last_error = f"{model}: rate limited (429)"
-                print(f"[TextGen] {model} → rate limited, trying next")
-                continue
-
             if resp.status_code != 200:
-                last_error = f"{model}: HTTP {resp.status_code} — {resp.text[:150]}"
-                print(f"[TextGen] {model} → {last_error}")
-                continue
+                raise RuntimeError(
+                    f"OpenRouter HTTP {resp.status_code}: {resp.text[:200]}"
+                )
 
-            data     = resp.json()
-            raw_text = data["choices"][0]["message"]["content"]
-            cleaned  = _extract_json(raw_text)
-            result   = json.loads(cleaned)
+            resp_json = resp.json()
+            raw_text = resp_json.get("choices", [{}])[0].get("message", {}).get("content", None)
+            if not raw_text:
+                raise RuntimeError(f"OpenRouter returned no text content. Response: {resp_json}")
+
+            cleaned = _extract_json(raw_text)
+            result  = json.loads(cleaned)
 
             if "answer" not in result:
-                last_error = f"{model}: JSON missing 'answer' key"
-                continue
+                raise RuntimeError(f"OpenRouter response missing 'answer' key. Raw: {raw_text[:120]}")
 
             # Ensure key_points is always a list
             if not isinstance(result.get("key_points"), list):
                 result["key_points"] = []
 
-            print(f"[TextGen] ✓ {model} — answer={len(result['answer'])} chars")
+            print(f"[TextGen] ✓ OpenRouter — answer={len(result['answer'])} chars")
             return result
 
-        except json.JSONDecodeError as e:
-            last_error = f"{model}: bad JSON — {e} | raw: {raw_text[:120]}"
-            print(f"[TextGen] {model} → JSON parse failed: {e}")
-            continue
-        except KeyError as e:
-            last_error = f"{model}: unexpected response shape — {e}"
-            print(f"[TextGen] {model} → KeyError: {e}")
-            continue
-        except httpx.RequestError as e:
-            last_error = f"{model}: network error — {e}"
-            print(f"[TextGen] {model} → network error: {e}")
-            continue
-
-    raise RuntimeError(
-        f"All free OpenRouter models failed. Last error: {last_error}"
-    )
+        except json.decoder.JSONDecodeError as e:
+            if attempt == max_retries:
+                print(f"[TextGen] Failed to parse JSON after {max_retries + 1} attempts.")
+                raise e
+            print(f"[TextGen] JSON parse error: {e}. Retrying...")

@@ -55,6 +55,20 @@ def get_doc_processed_path(subject_id: str, doc_id: str) -> str:
 def get_doc_meta_path(subject_id: str, doc_id: str) -> str:
     return f"{SUBJECTS_PATH}/{subject_id}/documents/{doc_id}/meta.json"
 
+# ── NEW: Textbook notes image helpers ──────────────────────────────────────────
+
+def get_note_image_dir(subject_id: str, doc_id: str) -> str:
+    """Notes images folder: subjects/{sid}/documents/{did}/notes/images/"""
+    return f"{SUBJECTS_PATH}/{subject_id}/documents/{doc_id}/notes/images"
+
+def get_note_image_path(subject_id: str, doc_id: str, image_index: int) -> str:
+    """Structured path for a note image: note_001.png, note_002.png, etc."""
+    return f"{get_note_image_dir(subject_id, doc_id)}/note_{image_index:03d}.png"
+
+def ensure_note_image_dir(subject_id: str, doc_id: str) -> None:
+    """Create the notes/images folder if it doesn't exist."""
+    os.makedirs(get_note_image_dir(subject_id, doc_id), exist_ok=True)
+
 def get_slide_cache_path(subject_id: str, question_hash: str) -> str:
     return f"{SUBJECTS_PATH}/{subject_id}/cache/slides/{question_hash}.json"
 
@@ -258,6 +272,19 @@ async def write_image(subject_id: str, cache_id: str, slide_index: int, image_by
     os.makedirs(os.path.dirname(path), exist_ok=True)
     async with aiofiles.open(path, "wb") as f:
         await f.write(image_bytes)
+    return path
+
+async def write_note_image(subject_id: str, doc_id: str, image_index: int, image_bytes: bytes) -> str:
+    """
+    Save a generated textbook-notes image to a structured folder:
+        subjects/{subject_id}/documents/{doc_id}/notes/images/note_{index:03d}.png
+    Returns the local path.
+    """
+    path = get_note_image_path(subject_id, doc_id, image_index)
+    ensure_note_image_dir(subject_id, doc_id)
+    async with aiofiles.open(path, "wb") as f:
+        await f.write(image_bytes)
+    logger.info(f"[local_storage] Note image saved: {path} ({len(image_bytes):,} bytes)")
     return path
 
 async def write_audio(subject_id: str, cache_id: str, language: str, slide_index: int, audio_bytes: bytes) -> str:

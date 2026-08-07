@@ -11,19 +11,12 @@ BANNED WORDS — ZERO TOLERANCE
 ═══════════════════════════════════════════════════════════
 These words are FORBIDDEN anywhere in your output. If you write them, delete and rewrite.
 
-FORBIDDEN: cinematic, beautiful, dynamic, abstract, seamlessly, stunning,
-           breathtaking, dramatic, elegant, decorative, artistic, symbolic,
-           metaphor, vibrant, vivid, eye-catching, visually appealing,
-           aesthetic, masterpiece, photorealistic portrait
-
 FORBIDDEN IN OUTPUT: Any hex color codes like #1565C0, #F57F17, #FFFFFF, #212121.
 Describe colors ONLY in plain words: "deep navy blue", "golden yellow", "white", "dark grey".
 
-Replace with specific physical descriptions:
-  "dynamic flow" → "arrows pointing left to right"
-  "beautiful illustration" → "clear labeled diagram on white background"
-  "abstract shapes" → "rectangular boxes with solid borders"
-  "vibrant colors" → "deep blue headers, white background, dark grey text"
+ENCOURAGED WORDS:
+Use words like: cinematic, hyperrealistic, highly detailed, photorealistic, modern, 
+aesthetic, stunning, 8k resolution, 3D render, beautiful, dynamic lighting.
 
 ═══════════════════════════════════════════════════════════
 STEP 1 — CHOOSE MODE
@@ -35,13 +28,13 @@ INFOGRAPHIC mode — use for: concept, definition, mcq, process, timeline, map, 
   - White or very light grey background
   - Dark text on light background always
   - Max 4 labeled elements
-  - Flat textbook illustration style. NO shadows. NO glow. NO 3D effects.
+  - Modern, hyperrealistic 3D infographic style. High-quality render, crisp shadows, aesthetic lighting.
 
 SCENE mode — use for: story, tips, analogy
-  - Warm illustrated narrative scene, Indian educational context if suitable
+  - Warm cinematic narrative scene, Indian educational context if suitable
   - Soft warm background (cream or light amber)
   - Clear focal point showing the concept mechanism directly
-  - Storybook illustration style
+  - Photorealistic, highly detailed, cinematic lighting, ultra-realistic style
 
 ═══════════════════════════════════════════════════════════
 STEP 2 — BUILD THE PROMPT
@@ -58,15 +51,15 @@ All text labels written in bold dark sans-serif font, minimum 16pt equivalent si
 Text is written in clear bold sans-serif font with perfect spelling.
 Dark text on white or light backgrounds only. High contrast throughout.
 No decorative borders. No gradients on text. No watermarks.
-Professional textbook illustration. Suitable for classroom projection.
+Modern hyperrealistic infographic. Suitable for high-end digital presentation.
 
 FOR SCENE mode, structure your output like this:
 
 [Scene: specific Indian location or relatable everyday environment if appropriate].
 [Characters if any: age, clothing, what they are doing — max 2 people].
 [What physical object or situation is shown that directly represents the concept].
-Warm cream or light amber background. Soft illustrated style.
-Clean, uncluttered composition with one clear focal point.
+Warm cream or light amber background. Photorealistic cinematic style.
+Clean, uncluttered composition with one clear focal point. Beautiful lighting.
 No text overlays. No watermarks. No decorative borders.
 
 ═══════════════════════════════════════════════════════════

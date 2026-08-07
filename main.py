@@ -4,6 +4,7 @@ from sqlalchemy import text, update, select
 from fastapi import FastAPI, Depends, BackgroundTasks, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy.ext.asyncio import AsyncSession
 from dotenv import load_dotenv
 
@@ -19,7 +20,7 @@ from core.tts_client import synthesize
 from core.b2_client import upload_to_b2
 from core.embeddings import embed_async, vec_to_pg_str
 from core.semantic_check import llm_same_topic
-from core.local_storage import ensure_base_dirs, read_slide_cache, write_slide_cache, write_audio
+from core.local_storage import ensure_base_dirs, read_slide_cache, write_slide_cache, write_audio, SUBJECTS_PATH
 from core.local_sync import sync_cache_row_to_local
 from core.llm_judge import judge_and_pick
 from routers.documents import router as documents_router
@@ -28,6 +29,9 @@ from routers.questions import router as questions_router
 from routers.text_answer import router as text_answer_router
 from routers.admin_tiers import router as admin_tiers_router
 from routers.content import router as content_router
+from routers.notes import router as notes_router
+from routers.notes_batch import router as notes_batch_router
+from routers.import_json import router as import_json_router
 
 
 # ─────────────────────────────────────────────────────────
@@ -100,10 +104,36 @@ app.include_router(questions_router)
 app.include_router(text_answer_router)
 app.include_router(admin_tiers_router)
 app.include_router(content_router)
+app.include_router(notes_router)
+app.include_router(notes_batch_router)
+app.include_router(import_json_router)
+
+# Serve local textbook images over HTTP so the frontend can present them
+# without going through B2. URL pattern: /local-images/{subject_id}/documents/{doc_id}/notes/images/note_001.png
+# check_dir=False prevents startup failure if /sdb-disk isn't mounted yet.
+app.mount(
+    "/local-images",
+    StaticFiles(directory=SUBJECTS_PATH, check_dir=False),
+    name="local-images",
+)
 
 @app.on_event("startup")
 async def startup_event():
     ensure_base_dirs()
+    # Reset any stale batch_jobs running state from previous container instance
+    try:
+        async with AsyncSessionLocal() as db:
+            await db.execute(
+                text("""UPDATE batch_jobs
+                        SET running=false, stop_flag=false,
+                            current_doc='', current_title='',
+                            last_update='Reset on server restart', updated_at=NOW()
+                        WHERE running=true""")
+            )
+            await db.commit()
+    except Exception as e:
+        import logging as _log
+        _log.getLogger(__name__).warning(f"[Startup] batch_jobs reset failed (table may not exist yet): {e}")
 
 
 # ─────────────────────────────────────────────────────────

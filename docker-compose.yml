@@ -22,15 +22,18 @@ services:
     environment:
       - VOXCPM_URL=http://host.docker.internal:7861    # local TTS for pre-gen
       - VOXCPM_API_KEY=spassword                       # VoxCPM auth key
-      - WAN2GP_URL=http://host.docker.internal:9090    # local image + video for pre-gen
+      - WAN2GP_URL=http://204.12.237.78:9090            # image generator (direct IP — host.docker.internal doesn't reach this port)
       - WAN2GP_API_KEY=mypassword1234                  # Wan2GP auth key
-      - OLLAMA_URL=http://host.docker.internal:11434   # local Ollama for slide + Manim generation
+      - OLLAMA_URL=http://69.197.145.4:11434           # local Ollama (direct IP)
       - OLLAMA_MODEL=qwen2.5-coder:32b                 # slides: fast code + reasoning
       - MANIM_OLLAMA_MODEL=devstral:24b                # Manim code: #1 OSS SWE-Bench model
       - OLLAMA_TIMEOUT=900                             # 15 min — larger models are slower
       - OLLAMA_EVICT_TIMEOUT=30                        # seconds to wait for VRAM eviction confirm
       - MANIM_MAX_RETRIES=3                            # Manim code-gen retries on bad output
       - MANIM_RENDER_TIMEOUT=300                       # seconds for manim CLI subprocess
+      - OPUSMAX_API_KEY                                # OpusMax Anthropic-compatible API (set in .env)
+      - OPUSMAX_MODEL                                  # Claude model to use (set in .env)
+
 
     extra_hosts:
       - "host.docker.internal:host-gateway"            # allow container to reach host ports
